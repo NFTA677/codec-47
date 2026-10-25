@@ -524,7 +524,21 @@ async function openChat(c, detail) {
   const instr = el('input', { placeholder: 'Instrucciones solo para este chat (ej.: es mi jefe, sé formal)', value: c.instructions || '' });
   detail.innerHTML = '';
   const bubbles = el('div', { class: 'bubbles' }, msgs.map((m) => el('div', { class: 'b' + (m.fromMe ? ' me' : '') }, m.text, el('small', {}, (m.auto ? 'CODEC · ' : '') + fmtTime(m.at)))));
-  detail.append(bubbles,
+  const memOut = el('div', { class: 'out' });
+  const memory = el('div', { class: 'memory' },
+    el('div', { class: 'row' },
+      el('strong', {}, 'Memoria del chat'),
+      el('span', { class: 'spacer' }),
+      el('button', { class: 'btn small', onclick: async (e) => {
+        e.target.disabled = true;
+        memOut.textContent = 'Pidiendo los mensajes antiguos a tu teléfono… (mantén WhatsApp con internet)';
+        try { await api(chatUrl(c.jid) + '/history', { method: 'POST' }); }
+        catch (err) { memOut.textContent = err.message; e.target.disabled = false; }
+      } }, 'Leer historial')),
+    el('p', { class: 'muted small mem-text' }, c.summary || 'Aún no hay memoria. Pulsa “Leer historial” para que CODEC lea la conversación antigua y responda de acuerdo a todo lo que han hablado.'),
+    memOut);
+  detail.dataset.jid = c.jid;
+  detail.append(memory, bubbles,
     el('div', { class: 'row' }, instr, el('button', { class: 'btn small', onclick: async () => { await api('/whatsapp/chats/' + encodeURIComponent(c.jid), { method: 'PATCH', body: { instructions: instr.value } }); c.instructions = instr.value; } }, 'Guardar')));
   bubbles.scrollTop = bubbles.scrollHeight;
 }
@@ -615,6 +629,11 @@ function connectWS() {
         new Notification('CODEC 47 · ' + (m.event.deviceName || ''), { body: m.event.detail });
     }
     if (m.type === 'wa' && !$('#view-whatsapp').classList.contains('hidden')) renderWaStatus(m);
+    if (m.type === 'wa_history' && !$('#view-whatsapp').classList.contains('hidden')) {
+      const d = document.querySelector(`.chat-detail[data-jid="${CSS.escape(m.jid)}"] .memory .out`);
+      if (d) d.textContent = m.done ? `Listo: ${m.loaded} mensajes antiguos leídos. Memoria actualizada.` : `Leyendo historial… ${m.loaded} mensajes`;
+      if (m.done) { clearTimeout(state.waT); state.waT = setTimeout(() => loadWaChats().catch(() => {}), 800); }
+    }
     if (m.type === 'wa_msg' && !$('#view-whatsapp').classList.contains('hidden')) { clearTimeout(state.waT); state.waT = setTimeout(() => loadWaChats().catch(() => {}), 600); }
     if (m.type === 'chat') {
       // Conversación hecha desde otro dispositivo (ej. el teléfono): se continúa aquí

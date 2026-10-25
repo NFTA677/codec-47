@@ -7,7 +7,7 @@ import pino from 'pino';
 import mongoose from 'mongoose';
 import { Audit, Device, User, WaAuth, WaContact, WaMessage } from './models.js';
 import { isOnline, notifyUser, sendCommand } from './hub.js';
-import { quickReply } from './ai.js';
+import { quickReply, summarizeChat } from './ai.js';
 
 const { BufferJSON, initAuthCreds, proto, DisconnectReason, Browsers, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, normalizeMessageContent, getContentType, isLidUser } = Baileys;
 const makeWASocket = Baileys.makeWASocket || Baileys.default?.default || Baileys.default;
@@ -179,12 +179,26 @@ export async function waConnect(userId, { phone } = {}) {
   };
   sock.ev.on('contacts.upsert', onContacts);
   sock.ev.on('contacts.update', onContacts);
-  sock.ev.on('messaging-history.set', ({ contacts }) => onContacts(contacts));
+  sock.ev.on('messaging-history.set', async ({ contacts, messages }) => {
+    onContacts(contacts);
+    if (!messages?.length) return;
+    const perChat = new Map();
+    for (const m of messages) {
+      try {
+        const r = await saveMessage(userId, sock, m, { history: true });
+        if (r) perChat.set(r.jid, (perChat.get(r.jid) || 0) + 1);
+      } catch {}
+    }
+    const total = [...perChat.values()].reduce((a, b) => a + b, 0);
+    if (total) await log(userId, `Historial recibido: ${total} mensajes de ${perChat.size} chat(s)`);
+    for (const [jid, n] of perChat) continueHistoryJob(userId, jid, n).catch(() => {});
+    // Chats sin trabajo pendiente: refrescar su memoria si cambió mucho
+    for (const jid of perChat.keys()) if (!historyJobs.has(userId + jid)) refreshSummary(userId, jid).catch(() => {});
+  });
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify' && type !== 'append') return;
     for (const m of messages) {
-      if (type === 'append' && !m.key?.fromMe) continue; // historial: solo guardamos lo que escribes tú
       try {
         await handleIncoming(userId, sock, m, type);
       } catch (e) {
@@ -204,20 +218,28 @@ function matchesAllow(allow, display, jid, altPhone) {
   });
 }
 
-async function handleIncoming(userId, sock, m, type = 'notify') {
-  let jid = m.key.remoteJid;
-  if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@newsletter')) return;
+const tsOf = (m) => {
+  const t = m.messageTimestamp;
+  const n = Number(t?.toNumber ? t.toNumber() : t?.low ?? t);
+  return n ? new Date(n * 1000) : new Date();
+};
+
+/** Interpreta y guarda un mensaje (en vivo o del historial). Devuelve datos del chat o null. */
+async function saveMessage(userId, sock, m, { history = false } = {}) {
+  const rawJid = m.key?.remoteJid;
+  let jid = rawJid;
+  if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@newsletter')) return null;
   const fromMe = !!m.key.fromMe;
 
   // Mensaje que no se pudo descifrar (WhatsApp lo reintenta solo)
   if (!m.message) {
-    if (!fromMe && m.messageStubType && undecryptedLogged++ < 5) await log(userId, `No pude leer un mensaje de ${m.pushName || jid} (se reintentará)`, 'warn');
-    return;
+    if (!history && !fromMe && m.messageStubType && undecryptedLogged++ < 5) await log(userId, `No pude leer un mensaje de ${m.pushName || jid} (se reintentará)`, 'warn');
+    return null;
   }
   // Abre envoltorios: mensajes temporales, de una sola vez, editados, enviados desde otro dispositivo…
   const content = normalizeMessageContent(m.message);
   const ctype = content ? getContentType(content) : null;
-  if (!ctype || IGNORE_TYPES.has(ctype)) return;
+  if (!ctype || IGNORE_TYPES.has(ctype)) return null;
   const text = textOf({ message: content }) || `[${ctype.replace('Message', '')}]`;
 
   const name = fromMe ? null : m.pushName || null;
@@ -230,12 +252,19 @@ async function handleIncoming(userId, sock, m, type = 'notify') {
   // Un mismo contacto puede llegar como LID o como número: usar siempre el número como chat
   if (altPhone && isLidUser?.(jid)) jid = altPhone + '@s.whatsapp.net';
   // Evitar duplicados (reintentos o dos servidores durante un despliegue)
-  if (m.key.id && (await WaMessage.exists({ userId, msgId: m.key.id }))) return;
+  if (m.key.id && (await WaMessage.exists({ userId, msgId: m.key.id }))) return null;
   if (name) await saveContact(userId, jid, name, altPhone || (jid.endsWith('@s.whatsapp.net') ? jid.split('@')[0] : null));
   const contact = await WaContact.findOne({ userId, jid }).lean();
   const display = name || contact?.name || jid.split('@')[0];
 
-  await WaMessage.create({ userId, jid, name: display, fromMe, text, msgId: m.key.id });
+  await WaMessage.create({ userId, jid, rawJid, name: display, fromMe, text, msgId: m.key.id, createdAt: tsOf(m) });
+  return { jid, display, text, fromMe, contact, altPhone };
+}
+
+async function handleIncoming(userId, sock, m, type = 'notify') {
+  const saved = await saveMessage(userId, sock, m);
+  if (!saved) return;
+  const { jid, display, text, fromMe, contact, altPhone } = saved;
   notifyUser(userId, { type: 'wa_msg', jid, name: display, text, fromMe });
   if (fromMe || type !== 'notify') return;
 
@@ -291,15 +320,83 @@ async function replyTo(userId, sock, user, jid, display, contact, mode) {
     notifyUser(userId, { type: 'wa_msg', jid, name: display, text: intro, fromMe: true, autoReply: true });
   }
 
-  const convo = (await WaMessage.find({ userId, jid }).sort({ createdAt: -1 }).limit(14).lean()).reverse();
-  const reply = await quickReply(user, display, convo, { mode, chatInstructions: contact?.instructions || '', mood: contact?.mood || '', introduced: introDue || !!contact?.introAt });
+  const convo = (await WaMessage.find({ userId, jid }).sort({ createdAt: -1 }).limit(25).lean()).reverse();
+  const reply = await quickReply(user, display, convo, { mode, chatInstructions: contact?.instructions || '', mood: contact?.mood || '', summary: contact?.summary || '', introduced: introDue || !!contact?.introAt });
   if (!reply) return null;
   await sock.sendPresenceUpdate('composing', jid).catch(() => {});
   await new Promise((r) => setTimeout(r, 300 + Math.min(1200, reply.length * 8))); // "escribiendo…" breve
   await sock.sendMessage(jid, { text: reply });
   await WaMessage.create({ userId, jid, name: display, fromMe: true, text: reply, autoReply: true });
   notifyUser(userId, { type: 'wa_msg', jid, name: display, text: reply, fromMe: true, autoReply: true });
+  refreshSummary(userId, jid).catch(() => {}); // actualiza la memoria en segundo plano si hace falta
   return reply;
+}
+
+// ---------- Historial antiguo y memoria del chat ----------
+const historyJobs = new Map(); // userId+jid -> { target, loaded, sock }
+
+/** Pide al teléfono los mensajes antiguos de un chat (de 50 en 50) hasta [target]. */
+export async function waLoadHistory(userId, jid, target = 300) {
+  const sock = sockOf(userId);
+  const k = String(userId) + jid;
+  if (historyJobs.has(k)) return { ok: true, pending: true };
+  historyJobs.set(k, { target, loaded: 0, sock, startedAt: Date.now() });
+  try {
+    await requestOlder(userId, jid);
+  } catch (e) {
+    historyJobs.delete(k);
+    throw e;
+  }
+  // Si el teléfono no responde en 90 s, cerrar el trabajo y resumir lo que haya
+  setTimeout(() => { if (historyJobs.get(k)) { historyJobs.delete(k); refreshSummary(userId, jid, true).catch(() => {}); } }, 90_000);
+  return { ok: true, pending: true };
+}
+
+async function requestOlder(userId, jid) {
+  const job = historyJobs.get(String(userId) + jid);
+  const oldest = await WaMessage.findOne({ userId, jid, msgId: { $exists: true, $ne: null } }).sort({ createdAt: 1 }).lean();
+  if (!oldest) throw new Error('Necesito al menos un mensaje reciente en este chat para pedir el historial. Escríbele o espera que te escriba.');
+  await job.sock.fetchMessageHistory(50, { remoteJid: oldest.rawJid || jid, id: oldest.msgId, fromMe: !!oldest.fromMe }, new Date(oldest.createdAt).getTime());
+}
+
+async function continueHistoryJob(userId, jid, n) {
+  const k = String(userId) + jid;
+  const job = historyJobs.get(k);
+  if (!job) return;
+  job.loaded += n;
+  notifyUser(userId, { type: 'wa_history', jid, loaded: job.loaded });
+  if (n >= 40 && job.loaded < job.target) return requestOlder(userId, jid).catch(() => finish());
+  return finish();
+  async function finish() {
+    historyJobs.delete(k);
+    await log(userId, `Historial del chat cargado: ${job.loaded} mensajes antiguos`);
+    await refreshSummary(userId, jid, true);
+    notifyUser(userId, { type: 'wa_history', jid, done: true, loaded: job.loaded });
+  }
+}
+
+const summarizing = new Set();
+/** Crea/actualiza la memoria del chat leyendo toda la conversación guardada. */
+export async function refreshSummary(userId, jid, force = false) {
+  const k = String(userId) + jid;
+  if (summarizing.has(k)) return;
+  const count = await WaMessage.countDocuments({ userId, jid });
+  const contact = await WaContact.findOne({ userId, jid }).lean();
+  if (count < 6) return;
+  if (!force && contact?.summaryCount && count - contact.summaryCount < 30) return;
+  summarizing.add(k);
+  try {
+    const user = await User.findById(userId);
+    const msgs = (await WaMessage.find({ userId, jid }).sort({ createdAt: -1 }).limit(500).lean()).reverse();
+    const name = contact?.name || msgs.find((m) => !m.fromMe)?.name || jid.split('@')[0];
+    const owner = user?.name || 'el usuario';
+    const fmt = (d) => new Date(d).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: '2-digit' });
+    const transcript = msgs.map((m) => `[${fmt(m.createdAt)}] ${m.fromMe ? (m.autoReply ? 'CODEC' : owner) : name}: ${m.text}`).join('\n').slice(-30000);
+    const summary = await summarizeChat(owner, name, transcript);
+    if (summary) await WaContact.updateOne({ userId, jid }, { $set: { summary, summaryAt: new Date(), summaryCount: count } }, { upsert: true });
+  } finally {
+    summarizing.delete(k);
+  }
 }
 
 /** Botón "Continuar": retoma el chat con lo último que se habló. */
@@ -326,7 +423,7 @@ export async function waChats(userId) {
   const byJid = new Map(contacts.map((c) => [c.jid, c]));
   const out = rows.map((r) => {
     const c = byJid.get(r._id) || {};
-    return { jid: r._id, name: c.name || r.name, last: r.last, at: r.at, lastFromMe: r.lastFromMe, count: r.count, auto: !!c.auto, instructions: c.instructions || '', mood: c.mood || '' };
+    return { jid: r._id, name: c.name || r.name, last: r.last, at: r.at, lastFromMe: r.lastFromMe, count: r.count, auto: !!c.auto, instructions: c.instructions || '', mood: c.mood || '', summary: c.summary || '', loading: historyJobs.has(String(userId) + r._id) };
   });
   // Chats configurados a mano (por número) que todavía no tienen mensajes
   const seen = new Set(out.map((c) => c.jid));
@@ -349,6 +446,9 @@ export async function waSetChat(userId, jid, { auto, instructions, mood, name })
   if (typeof name === 'string' && name.trim()) $set.name = name.trim().slice(0, 60);
   if (typeof instructions === 'string') $set.instructions = instructions.slice(0, 500);
   await WaContact.updateOne({ userId, jid }, { $set }, { upsert: true });
+  if ($set.auto || $set.mood) {
+    waLoadHistory(userId, jid).catch(() => refreshSummary(userId, jid, true).catch(() => {}));
+  }
 }
 
 export async function waLogout(userId) {

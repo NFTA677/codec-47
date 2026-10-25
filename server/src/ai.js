@@ -408,7 +408,31 @@ const MOOD_STYLE = {
   divertido: 'TONO DIVERTIDO: alegre, con humor ligero y espontáneo.',
 };
 
-export async function quickReply(user, contactName, convo, { mode = 'auto', chatInstructions = '', mood = '', introduced = false } = {}) {
+/** Resume toda una conversación de WhatsApp en una "memoria" que CODEC usa al responder. */
+export async function summarizeChat(owner, contactName, transcript) {
+  const msgs = [
+    {
+      role: 'system',
+      content: `Analiza esta conversación de WhatsApp entre ${owner} y ${contactName} (los mensajes de "CODEC" son del asistente automático). Escribe en español una memoria breve (máximo 14 líneas, sin markdown) con:
+1) Qué relación tienen y cómo se tratan (apodos, confianza, cariño o formalidad).
+2) Temas importantes, gustos y datos personales que se mencionan con frecuencia.
+3) Planes, acuerdos, promesas o cosas pendientes (con fecha si la hay).
+4) Cómo escribe ${owner} a esta persona (estilo, largo de mensajes, expresiones, emojis).
+5) El tono emocional reciente de la conversación.
+Usa SOLO lo que aparece en la conversación; no inventes.`,
+    },
+    { role: 'user', content: transcript },
+  ];
+  try {
+    const m = await callModel(msgs, false, 700, MODELS(), 40_000);
+    return cleanReply(m.content).slice(0, 3000);
+  } catch (e) {
+    console.error('[wa summary]', e.message);
+    return null;
+  }
+}
+
+export async function quickReply(user, contactName, convo, { mode = 'auto', chatInstructions = '', mood = '', summary = '', introduced = false } = {}) {
   const owner = user.name || 'tu usuario';
   const sys = `Eres CODEC, el asistente personal de ${owner}. Respondes sus mensajes de WhatsApp mientras él no puede.
 QUIÉN ERES:
@@ -426,6 +450,7 @@ CÓMO ESCRIBES:
 ${user.wa?.instructions ? `- Instrucciones generales de ${owner}: ${user.wa.instructions}` : ''}
 ${chatInstructions ? `- Sobre este chat: ${chatInstructions}` : ''}
 ${MOOD_STYLE[mood] ? `- ${MOOD_STYLE[mood].replaceAll('${OWNER}', owner)} Puedes transmitir en nombre de ${owner} los sentimientos que él escribió en sus instrucciones para este chat (por ejemplo, que la extraña), dejando claro que es su mensaje y no inventando otros.` : ''}
+${summary ? `\nMEMORIA DE ESTE CHAT (resumen de TODA la conversación anterior). Úsala activamente: si la persona pregunta por algo que está aquí (planes, promesas, datos, cosas pendientes), respóndelo con lo que se habló (ej. "sí, ${owner} te prometió llevarte en vacaciones; le recuerdo para confirmar la fecha"). Trata a la persona como la trata ${owner} (apodos, confianza) e imita su estilo. Lo único que NO sabes es el presente de ${owner} (cómo está, dónde, qué hace ahora):\n${summary}\n` : ''}
 Estás hablando con: ${contactName}.`;
 
   const msgs = [{ role: 'system', content: sys }, ...convo.map((m) => ({ role: m.fromMe ? 'assistant' : 'user', content: m.text }))];

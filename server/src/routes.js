@@ -7,7 +7,7 @@ import { audit, isOnline, sendCommand } from './hub.js';
 import { chat } from './ai.js';
 import { getWeather } from './weather.js';
 import { synthesize, VOICES } from './tts.js';
-import { DEFAULT_INTRO, waChatMessages, waChats, waConnect, waContinueChat, waLogout, waSetChat, waStatus } from './whatsapp.js';
+import { DEFAULT_INTRO, refreshSummary, waChatMessages, waChats, waConnect, waContinueChat, waLoadHistory, waLogout, waSetChat, waStatus } from './whatsapp.js';
 
 export const apiRouter = express.Router();
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
@@ -288,6 +288,15 @@ apiRouter.patch('/whatsapp/chats/:jid', wrap(async (req, res) => {
   const jid = /^\d{8,15}$/.test(req.params.jid) ? req.params.jid + '@s.whatsapp.net' : req.params.jid;
   await waSetChat(req.user._id, jid, req.body || {});
   res.json({ ok: true });
+}));
+apiRouter.post('/whatsapp/chats/:jid/history', wrap(async (req, res) => {
+  try {
+    res.json(await waLoadHistory(req.user._id, req.params.jid));
+  } catch (e) {
+    // Sin mensajes ancla: al menos resumir lo que ya hay
+    await refreshSummary(req.user._id, req.params.jid, true).catch(() => {});
+    res.status(400).json({ error: e.message });
+  }
 }));
 apiRouter.post('/whatsapp/chats/:jid/continue', wrap(async (req, res) => {
   try {

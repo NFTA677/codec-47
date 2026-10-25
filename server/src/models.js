@@ -40,6 +40,7 @@ const WaMessageSchema = new Schema(
     text: String,
     autoReply: { type: Boolean, default: false },
     msgId: { type: String, index: true },
+    rawJid: String, // jid original de WhatsApp (puede ser LID); se usa para pedir historial
   },
   { timestamps: true }
 );
@@ -54,6 +55,9 @@ const WaContactSchema = new Schema({
   instructions: { type: String, default: '' }, // instrucciones solo para este chat
   mood: { type: String, default: '' }, // tono: romantico | melancolico | carinoso | formal | divertido
   introAt: Date, // cuándo se envió el saludo de emergencia
+  summary: { type: String, default: '' }, // memoria del chat (resumen de toda la conversación)
+  summaryAt: Date,
+  summaryCount: { type: Number, default: 0 }, // nº de mensajes cuando se resumió
   blocked: { type: Boolean, default: false },
 });
 WaContactSchema.index({ userId: 1, jid: 1 }, { unique: true });
