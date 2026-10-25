@@ -9,7 +9,7 @@ import { Audit, Device, User, WaAuth, WaContact, WaMessage } from './models.js';
 import { isOnline, notifyUser, sendCommand } from './hub.js';
 import { quickReply } from './ai.js';
 
-const { BufferJSON, initAuthCreds, proto, DisconnectReason, Browsers, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = Baileys;
+const { BufferJSON, initAuthCreds, proto, DisconnectReason, Browsers, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, normalizeMessageContent, getContentType, isLidUser } = Baileys;
 const makeWASocket = Baileys.makeWASocket || Baileys.default?.default || Baileys.default;
 const logger = pino({ level: 'silent' });
 
@@ -80,6 +80,8 @@ export function waStatus(userId) {
   return { status: s?.status || 'desconectado', qr: s?.qr || null, code: s?.code || null, me: s?.me || null, lastError: s?.lastError || null };
 }
 
+const IGNORE_TYPES = new Set(['protocolMessage', 'reactionMessage', 'senderKeyDistributionMessage', 'messageContextInfo', 'pollUpdateMessage', 'keepInChatMessage', 'pinInChatMessage', 'encReactionMessage']);
+let undecryptedLogged = 0;
 const textOf = (m) =>
   m.message?.conversation ||
   m.message?.extendedTextMessage?.text ||
@@ -177,10 +179,11 @@ export async function waConnect(userId, { phone } = {}) {
   sock.ev.on('messaging-history.set', ({ contacts }) => onContacts(contacts));
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
+    if (type !== 'notify' && type !== 'append') return;
     for (const m of messages) {
+      if (type === 'append' && !m.key?.fromMe) continue; // historial: solo guardamos lo que escribes tú
       try {
-        await handleIncoming(userId, sock, m);
+        await handleIncoming(userId, sock, m, type);
       } catch (e) {
         console.error('[wa msg]', e.message);
       }
@@ -198,21 +201,36 @@ function matchesAllow(allow, display, jid, altPhone) {
   });
 }
 
-async function handleIncoming(userId, sock, m) {
+async function handleIncoming(userId, sock, m, type = 'notify') {
   const jid = m.key.remoteJid;
   if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@newsletter')) return;
-  const text = textOf(m);
-  if (!text) return;
   const fromMe = !!m.key.fromMe;
+
+  // Mensaje que no se pudo descifrar (WhatsApp lo reintenta solo)
+  if (!m.message) {
+    if (!fromMe && m.messageStubType && undecryptedLogged++ < 5) await log(userId, `No pude leer un mensaje de ${m.pushName || jid} (se reintentará)`, 'warn');
+    return;
+  }
+  // Abre envoltorios: mensajes temporales, de una sola vez, editados, enviados desde otro dispositivo…
+  const content = normalizeMessageContent(m.message);
+  const ctype = content ? getContentType(content) : null;
+  if (!ctype || IGNORE_TYPES.has(ctype)) return;
+  const text = textOf({ message: content }) || `[${ctype.replace('Message', '')}]`;
+
   const name = fromMe ? null : m.pushName || null;
-  const altPhone = (m.key.remoteJidAlt || m.key.senderPn || '').split('@')[0] || null;
+  // WhatsApp oculta números tras un "LID": recuperar el número real para la lista de permitidos
+  let altPhone = (m.key.remoteJidAlt || m.key.senderPn || '').split('@')[0] || null;
+  if (!altPhone && isLidUser?.(jid)) {
+    try { altPhone = (await sock.signalRepository?.lidMapping?.getPNForLID(jid))?.split('@')[0]?.split(':')[0] || null; } catch {}
+  }
+  if (!altPhone && jid.endsWith('@s.whatsapp.net')) altPhone = jid.split('@')[0];
   if (name) await saveContact(userId, jid, name, altPhone || (jid.endsWith('@s.whatsapp.net') ? jid.split('@')[0] : null));
   const contact = await WaContact.findOne({ userId, jid }).lean();
   const display = name || contact?.name || jid.split('@')[0];
 
   await WaMessage.create({ userId, jid, name: display, fromMe, text });
   notifyUser(userId, { type: 'wa_msg', jid, name: display, text, fromMe });
-  if (fromMe) return;
+  if (fromMe || type !== 'notify') return;
 
   // Mensaje urgente: avisar de verdad al usuario (en voz alta en el teléfono + alerta en la web)
   if (URGENT.test(text)) {

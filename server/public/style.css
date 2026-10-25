@@ -178,6 +178,7 @@ dialog h3 { margin: 0; }
 
 .dl { display: flex; flex-direction: column; gap: 12px; }
 .dl .btn { align-self: flex-start; }
+.warn-box { margin: 0; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-size: 12.5px; color: var(--text); background: var(--panel-2); }
 .seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
 .seg label { display: block !important; cursor: pointer; }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }

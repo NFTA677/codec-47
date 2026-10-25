@@ -533,6 +533,8 @@ async function loadWhatsApp() {
   renderWaStatus(st);
   const w = st.settings || {};
   $('#wa-privacy').checked = !!w.privacy;
+  $('#wa-privacy-warn').classList.toggle('hidden', !!w.privacy);
+  $('#wa-privacy').onchange = () => $('#wa-privacy-warn').classList.toggle('hidden', $('#wa-privacy').checked);
   document.querySelector(`input[name=wa-scope][value=${w.replyAll ? 'all' : 'some'}]`).checked = true;
   $('#wa-allow').value = (w.allow || []).join('\n');
   $('#wa-intro-on').checked = w.introEnabled !== false;
