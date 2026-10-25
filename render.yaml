@@ -1,0 +1,28 @@
+# Despliegue en Render (Blueprint). En Render: New → Blueprint → elige este repositorio.
+services:
+  - type: web
+    name: codec47
+    runtime: node
+    plan: free
+    buildCommand: cd server && npm ci --omit=dev
+    startCommand: node server/src/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: MONGODB_URI
+        sync: false # te la pedirá Render: pega tu cadena de MongoDB Atlas
+      - key: NVIDIA_API_KEY
+        sync: false # te la pedirá Render: pega tu clave nvapi-...
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DB_NAME
+        value: codec47
+      - key: NVIDIA_MODEL
+        value: nvidia/nemotron-3.5-lightning-30b-a3b
+      - key: NVIDIA_THINKING
+        value: "true"
+      - key: DEFAULT_TZ
+        value: America/Mexico_City
+      - key: ALLOW_REGISTER
+        value: "false"

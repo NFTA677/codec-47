@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CODEC 47</string>
+    <string name="accessibility_description">Permite que CODEC 47 controle tu teléfono por voz: volver, inicio, recientes, bloquear pantalla, capturas y notificaciones.</string>
+</resources>

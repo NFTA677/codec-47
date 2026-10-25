@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 320px; margin: 0; padding: 14px; background: #0b0f17; color: #e6ebf5; font: 13px system-ui, sans-serif; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    .st { color: #8b97ad; margin-bottom: 10px; }
+    .st b.ok { color: #76b900; }
+    input { width: 100%; box-sizing: border-box; background: #1a2233; color: #e6ebf5; border: 1px solid #253048; border-radius: 8px; padding: 8px; margin-bottom: 8px; font: inherit; }
+    button { background: #76b900; color: #0b1400; border: 0; border-radius: 8px; padding: 8px 12px; font-weight: 600; cursor: pointer; width: 100%; }
+    details { margin-bottom: 10px; }
+    summary { cursor: pointer; color: #8b97ad; margin-bottom: 8px; }
+    #log { max-height: 180px; overflow: auto; margin: 8px 0; display: grid; gap: 6px; }
+    .m { padding: 6px 10px; border-radius: 10px; background: #1a2233; }
+    .m.u { background: #23406a; justify-self: end; }
+    .row { display: flex; gap: 6px; }
+    .row input { margin: 0; }
+    .row button { width: auto; }
+  </style>
+</head>
+<body>
+  <h1>CODEC 47</h1>
+  <div class="st">Estado: <b id="status">…</b></div>
+  <details id="cfg">
+    <summary>Configuración</summary>
+    <input id="server" placeholder="https://tu-app.onrender.com" />
+    <input id="key" placeholder="Clave del dispositivo (c47_...)" type="password" />
+    <button id="save">Guardar y conectar</button>
+  </details>
+  <div id="log"></div>
+  <form class="row" id="chat">
+    <input id="text" placeholder="Escribe a CODEC 47…" autocomplete="off" />
+    <button>➤</button>
+  </form>
+  <script src="popup.js"></script>
+</body>
+</html>

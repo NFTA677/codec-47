@@ -1,0 +1,17 @@
+node_modules/
+.env
+*.log
+agent/config.json
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/.kotlin/
+*.apk
+*.iml
+
+# Credenciales descargadas de Atlas
+atlas-credentials*.env
