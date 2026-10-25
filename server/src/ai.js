@@ -96,10 +96,10 @@ const TOOLS = [
   ),
   fn(
     'whatsapp_chat_style',
-    'Configura un chat de WhatsApp: tono de las respuestas automáticas (romántico, melancólico, cariñoso, formal, divertido o normal), activar respuestas automáticas e instrucciones propias',
+    'Configura un chat de WhatsApp: tono de las respuestas automáticas (romántico, melancólico, cariñoso, comprensivo, formal, divertido o normal), activar respuestas automáticas e instrucciones propias',
     {
       to: S('Contacto o número'),
-      mood: { type: 'string', enum: ['normal', 'romantico', 'melancolico', 'carinoso', 'formal', 'divertido'] },
+      mood: { type: 'string', enum: ['normal', 'romantico', 'melancolico', 'carinoso', 'comprensivo', 'formal', 'divertido'] },
       auto: { type: 'boolean', description: 'Responder automáticamente en este chat' },
       instructions: S('Instrucciones para este chat (opcional)'),
     },
@@ -404,6 +404,7 @@ const MOOD_STYLE = {
   romantico: 'TONO ROMÁNTICO: escribe con mucha ternura y dulzura, con un toque poético y frases bonitas que hagan sentir especial a la persona; transmite con emoción el cariño de ${OWNER} que aparece en sus instrucciones. Puedes usar un emoji tierno (❤️, 🌹, ✨). Mensajes de 2 a 3 frases.',
   melancolico: 'TONO MELANCÓLICO: escribe con nostalgia y sensibilidad, frases pausadas y reflexivas, evocando los recuerdos y el tiempo compartido; transmite la añoranza de ${OWNER} que aparece en sus instrucciones. Sin dramatizar en exceso. Mensajes de 2 a 3 frases.',
   carinoso: 'TONO CARIÑOSO: cálido, cercano y afectuoso, como alguien que quiere mucho a la persona.',
+  comprensivo: 'TONO COMPRENSIVO: escucha de verdad. Primero reconoce y valida lo que la persona siente o cuenta ("entiendo que te sientas así", "tiene sentido"), sin juzgar ni minimizar; responde con paciencia y calma, ofrece apoyo y, si ayuda, una pregunta suave para que se exprese. Nada de sermones ni soluciones apresuradas.',
   formal: 'TONO FORMAL: trato de usted, educado y profesional.',
   divertido: 'TONO DIVERTIDO: alegre, con humor ligero y espontáneo.',
 };

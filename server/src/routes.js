@@ -312,6 +312,7 @@ apiRouter.post('/whatsapp/logout', wrap(async (req, res) => {
 apiRouter.patch('/whatsapp/settings', wrap(async (req, res) => {
   const { privacy, replyAll, allow, instructions, intro, introEnabled } = req.body || {};
   if (typeof introEnabled === 'boolean') req.user.wa.introEnabled = introEnabled;
+  if (req.body?.introAfterHours !== undefined) req.user.wa.introAfterHours = Math.max(0, Math.min(168, Number(req.body.introAfterHours) || 0));
   if (typeof intro === 'string') req.user.wa.intro = intro.slice(0, 600);
   if (typeof privacy === 'boolean') req.user.wa.privacy = privacy;
   if (typeof replyAll === 'boolean') req.user.wa.replyAll = replyAll;

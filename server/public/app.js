@@ -486,7 +486,7 @@ function fmtTime(d) {
   return t.toDateString() === new Date().toDateString() ? t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : t.toLocaleDateString();
 }
 
-const MOOD_LABEL = { '': 'Tono normal', romantico: 'Romántico', melancolico: 'Melancólico', carinoso: 'Cariñoso', formal: 'Formal', divertido: 'Divertido' };
+const MOOD_LABEL = { '': 'Tono normal', romantico: 'Romántico', melancolico: 'Melancólico', carinoso: 'Cariñoso', comprensivo: 'Comprensivo', formal: 'Formal', divertido: 'Divertido' };
 const moodSelect = (value = '', cls = 'mood-select') => {
   const sel = el('select', { class: cls, 'aria-label': 'Tono de las respuestas' }, Object.entries(MOOD_LABEL).map(([v, l]) => el('option', { value: v }, l)));
   sel.value = value;
@@ -574,6 +574,7 @@ async function loadWhatsApp() {
   $('#wa-allow').value = (w.allow || []).join('\n');
   $('#wa-intro-on').checked = w.introEnabled !== false;
   $('#wa-intro').value = w.intro || '';
+  $('#wa-intro-hours').value = w.introAfterHours ?? 3;
   $('#wa-intro').placeholder = st.defaultIntro || '';
   $('#wa-instr').value = w.instructions || '';
   loadWaChats().catch(() => {});
@@ -586,6 +587,7 @@ $('#wa-form').onsubmit = async (e) => {
     allow: $('#wa-allow').value.split('\n'),
     introEnabled: $('#wa-intro-on').checked,
     intro: $('#wa-intro').value,
+    introAfterHours: Number($('#wa-intro-hours').value),
     instructions: $('#wa-instr').value } });
   const btn = e.submitter; if (btn) { btn.textContent = 'Guardado'; setTimeout(() => (btn.textContent = 'Guardar'), 1500); }
 };

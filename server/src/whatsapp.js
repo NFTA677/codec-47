@@ -9,13 +9,23 @@ import { Audit, Device, User, WaAuth, WaContact, WaMessage } from './models.js';
 import { isOnline, notifyUser, sendCommand } from './hub.js';
 import { quickReply, summarizeChat } from './ai.js';
 
-const { BufferJSON, initAuthCreds, proto, DisconnectReason, Browsers, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, normalizeMessageContent, getContentType, isLidUser } = Baileys;
+const { BufferJSON, initAuthCreds, proto, DisconnectReason, Browsers, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, normalizeMessageContent, getContentType, isLidUser, generateMessageIDV2 } = Baileys;
 const makeWASocket = Baileys.makeWASocket || Baileys.default?.default || Baileys.default;
 const logger = pino({ level: 'silent' });
 
 const sessions = new Map(); // userId -> { sock, status, qr, code, me, lastError }
 const lastAuto = new Map(); // jid -> [timestamps]
 const pendingReply = new Map(); // jid -> temporizador de respuesta
+const sentIds = new Set(); // ids de mensajes que envió CODEC (para ignorar su eco)
+
+/** Envía un mensaje y lo guarda una sola vez (WhatsApp devuelve una copia que se ignora por id). */
+async function sendAndSave(userId, sock, jid, content, record) {
+  const id = generateMessageIDV2(sock.user?.id);
+  sentIds.add(id);
+  setTimeout(() => sentIds.delete(id), 10 * 60_000);
+  await sock.sendMessage(jid, content, { messageId: id });
+  await WaMessage.create({ userId, jid, fromMe: true, msgId: id, ...record });
+}
 const REPLY_DELAY = 2500; // ms que espera a que la persona termine de escribir
 const URGENT = /(urgente|urgencia|emergencia|hospital|accidente|auxilio|socorro|ayuda|polic[ií]a|ambulancia|grave)/i;
 
@@ -230,6 +240,7 @@ async function saveMessage(userId, sock, m, { history = false } = {}) {
   let jid = rawJid;
   if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@newsletter')) return null;
   const fromMe = !!m.key.fromMe;
+  if (fromMe && sentIds.has(m.key.id)) return null; // eco de un mensaje que envió CODEC
 
   // Mensaje que no se pudo descifrar (WhatsApp lo reintenta solo)
   if (!m.message) {
@@ -308,14 +319,23 @@ async function handleIncoming(userId, sock, m, type = 'notify') {
 
 /** Genera y envía una respuesta humanizada en un chat (automática o con el botón "Continuar"). */
 async function replyTo(userId, sock, user, jid, display, contact, mode) {
-  // Saludo de emergencia: la primera vez (o tras 12 h sin hablar) se presenta
-  const introDue = user.wa.introEnabled !== false && (!contact?.introAt || Date.now() - new Date(contact.introAt) > 12 * 3600_000);
-  if (introDue && mode === 'auto') {
+  // Saludo de emergencia: al empezar una conversación nueva (primera vez, o tras X horas sin hablar)
+  let introDue = false;
+  if (user.wa.introEnabled !== false && mode === 'auto') {
+    const recent = await WaMessage.find({ userId, jid }).sort({ createdAt: -1 }).limit(40).lean();
+    let i = 0;
+    while (i < recent.length && !recent[i].fromMe) i++; // mensajes nuevos de la persona (los que estamos respondiendo)
+    const batchStart = recent[i - 1]?.createdAt || new Date();
+    const prev = recent[i]; // lo último que se habló antes
+    const gapH = prev ? (new Date(batchStart) - new Date(prev.createdAt)) / 3600_000 : Infinity;
+    const afterH = Number(user.wa.introAfterHours ?? 3);
+    introDue = !contact?.introAt || gapH >= afterH;
+  }
+  if (introDue) {
     const intro = (user.wa.intro || '').trim() || DEFAULT_INTRO(user.name);
     await sock.sendPresenceUpdate('composing', jid).catch(() => {});
     await new Promise((r) => setTimeout(r, 400));
-    await sock.sendMessage(jid, { text: intro });
-    await WaMessage.create({ userId, jid, name: display, fromMe: true, text: intro, autoReply: true });
+    await sendAndSave(userId, sock, jid, { text: intro }, { name: display, text: intro, autoReply: true });
     await WaContact.updateOne({ userId, jid }, { $set: { introAt: new Date() } }, { upsert: true });
     notifyUser(userId, { type: 'wa_msg', jid, name: display, text: intro, fromMe: true, autoReply: true });
   }
@@ -325,8 +345,7 @@ async function replyTo(userId, sock, user, jid, display, contact, mode) {
   if (!reply) return null;
   await sock.sendPresenceUpdate('composing', jid).catch(() => {});
   await new Promise((r) => setTimeout(r, 300 + Math.min(1200, reply.length * 8))); // "escribiendo…" breve
-  await sock.sendMessage(jid, { text: reply });
-  await WaMessage.create({ userId, jid, name: display, fromMe: true, text: reply, autoReply: true });
+  await sendAndSave(userId, sock, jid, { text: reply }, { name: display, text: reply, autoReply: true });
   notifyUser(userId, { type: 'wa_msg', jid, name: display, text: reply, fromMe: true, autoReply: true });
   refreshSummary(userId, jid).catch(() => {}); // actualiza la memoria en segundo plano si hace falta
   return reply;
@@ -437,7 +456,7 @@ export async function waChatMessages(userId, jid, limit = 40) {
   return rows.reverse().map((r) => ({ fromMe: r.fromMe, text: r.text, at: r.createdAt, auto: r.autoReply || undefined }));
 }
 
-export const MOODS = ['', 'romantico', 'melancolico', 'carinoso', 'formal', 'divertido'];
+export const MOODS = ['', 'romantico', 'melancolico', 'carinoso', 'comprensivo', 'formal', 'divertido'];
 
 export async function waSetChat(userId, jid, { auto, instructions, mood, name }) {
   const $set = {};
@@ -484,24 +503,21 @@ export async function resolveJid(userId, ref) {
 export async function waSendText(userId, to, text) {
   const sock = sockOf(userId);
   const { jid, name } = await resolveJid(userId, to);
-  await sock.sendMessage(jid, { text });
-  await WaMessage.create({ userId, jid, name, fromMe: true, text });
+  await sendAndSave(userId, sock, jid, { text }, { name, text });
   return `Mensaje enviado a ${name}`;
 }
 
 export async function waSendLocation(userId, to, lat, lng, label) {
   const sock = sockOf(userId);
   const { jid, name } = await resolveJid(userId, to);
-  await sock.sendMessage(jid, { location: { degreesLatitude: lat, degreesLongitude: lng, name: label || 'Mi ubicación' } });
-  await WaMessage.create({ userId, jid, name, fromMe: true, text: `[ubicación ${lat},${lng}]` });
+  await sendAndSave(userId, sock, jid, { location: { degreesLatitude: lat, degreesLongitude: lng, name: label || 'Mi ubicación' } }, { name, text: `[ubicación ${lat},${lng}]` });
   return `Ubicación enviada a ${name}`;
 }
 
 export async function waSendImage(userId, to, buffer, caption) {
   const sock = sockOf(userId);
   const { jid, name } = await resolveJid(userId, to);
-  await sock.sendMessage(jid, { image: buffer, caption: caption || undefined });
-  await WaMessage.create({ userId, jid, name, fromMe: true, text: '[foto]' + (caption ? ' ' + caption : '') });
+  await sendAndSave(userId, sock, jid, { image: buffer, caption: caption || undefined }, { name, text: '[foto]' + (caption ? ' ' + caption : '') });
   return `Foto enviada a ${name}`;
 }
 

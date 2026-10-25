@@ -18,6 +18,7 @@ const UserSchema = new Schema(
       instructions: { type: String, default: '' }, // ej. "di que estoy en una reunión hasta las 5"
       introEnabled: { type: Boolean, default: true }, // saludo de emergencia al empezar
       intro: { type: String, default: '' }, // texto del saludo (vacío = el predeterminado)
+      introAfterHours: { type: Number, default: 3 }, // repetir saludo si no hablaban desde hace N horas
     },
   },
   { timestamps: true }
