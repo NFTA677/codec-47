@@ -107,11 +107,11 @@ const TOOLS = [
   ),
 ];
 
-async function callModel(messages, useTools = true, maxTokens = 1500) {
+async function callModel(messages, useTools = true, maxTokens = 1500, models = MODELS(), timeoutMs = 25_000) {
   const key = process.env.NVIDIA_API_KEY;
   if (!key) throw new Error('Falta NVIDIA_API_KEY');
   let lastErr;
-  for (const model of MODELS()) {
+  for (const model of models) {
     const body = { model, messages, temperature: 0.4, max_tokens: maxTokens };
     if (process.env.AI_THINKING !== 'true') body.chat_template_kwargs = { enable_thinking: false };
     if (useTools) {
@@ -123,7 +123,7 @@ async function callModel(messages, useTools = true, maxTokens = 1500) {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(25_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) {
         const t = await res.text();
@@ -409,7 +409,9 @@ Estás hablando con: ${contactName}.`;
     });
   }
   try {
-    const m = await callModel(msgs, false, 300);
+    // Modelo rápido (~0,5 s) para WhatsApp; si falla o tarda, el grande
+    const fast = [process.env.AI_FAST_MODEL || 'nvidia/nemotron-3.5-super-vl-120b-a12b', ...MODELS()].filter((x, i, a) => a.indexOf(x) === i);
+    const m = await callModel(msgs, false, 250, fast, 8000);
     return cleanReply(m.content).slice(0, 600);
   } catch (e) {
     console.error('[wa reply]', e.message);

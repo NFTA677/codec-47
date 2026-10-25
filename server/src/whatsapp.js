@@ -16,7 +16,7 @@ const logger = pino({ level: 'silent' });
 const sessions = new Map(); // userId -> { sock, status, qr, code, me, lastError }
 const lastAuto = new Map(); // jid -> [timestamps]
 const pendingReply = new Map(); // jid -> temporizador de respuesta
-const REPLY_DELAY = 6000; // ms que espera a que la persona termine de escribir
+const REPLY_DELAY = 2500; // ms que espera a que la persona termine de escribir
 const URGENT = /(urgente|urgencia|emergencia|hospital|accidente|auxilio|socorro|ayuda|polic[ií]a|ambulancia|grave)/i;
 
 export const DEFAULT_INTRO = (name) =>
@@ -284,7 +284,7 @@ async function replyTo(userId, sock, user, jid, display, contact, mode) {
   if (introDue && mode === 'auto') {
     const intro = (user.wa.intro || '').trim() || DEFAULT_INTRO(user.name);
     await sock.sendPresenceUpdate('composing', jid).catch(() => {});
-    await new Promise((r) => setTimeout(r, 1200));
+    await new Promise((r) => setTimeout(r, 400));
     await sock.sendMessage(jid, { text: intro });
     await WaMessage.create({ userId, jid, name: display, fromMe: true, text: intro, autoReply: true });
     await WaContact.updateOne({ userId, jid }, { $set: { introAt: new Date() } }, { upsert: true });
@@ -295,7 +295,7 @@ async function replyTo(userId, sock, user, jid, display, contact, mode) {
   const reply = await quickReply(user, display, convo, { mode, chatInstructions: contact?.instructions || '', introduced: introDue || !!contact?.introAt });
   if (!reply) return null;
   await sock.sendPresenceUpdate('composing', jid).catch(() => {});
-  await new Promise((r) => setTimeout(r, 1000 + Math.min(4000, reply.length * 25)));
+  await new Promise((r) => setTimeout(r, 300 + Math.min(1200, reply.length * 8))); // "escribiendo…" breve
   await sock.sendMessage(jid, { text: reply });
   await WaMessage.create({ userId, jid, name: display, fromMe: true, text: reply, autoReply: true });
   notifyUser(userId, { type: 'wa_msg', jid, name: display, text: reply, fromMe: true, autoReply: true });
