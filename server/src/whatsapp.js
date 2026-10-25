@@ -332,7 +332,7 @@ async function replyTo(userId, sock, user, jid, display, contact, mode) {
     introDue = !contact?.introAt || gapH >= afterH;
   }
   if (introDue) {
-    const intro = (user.wa.intro || '').trim() || DEFAULT_INTRO(user.name);
+    const intro = (user.wa.intro || '').trim() || DEFAULT_INTRO((user?.wa?.alias || (user?.name || '').trim().split(/s+/)[0] || 'tu usuario'));
     await sock.sendPresenceUpdate('composing', jid).catch(() => {});
     await new Promise((r) => setTimeout(r, 400));
     await sendAndSave(userId, sock, jid, { text: intro }, { name: display, text: intro, autoReply: true });
@@ -408,7 +408,7 @@ export async function refreshSummary(userId, jid, force = false) {
     const user = await User.findById(userId);
     const msgs = (await WaMessage.find({ userId, jid }).sort({ createdAt: -1 }).limit(500).lean()).reverse();
     const name = contact?.name || msgs.find((m) => !m.fromMe)?.name || jid.split('@')[0];
-    const owner = user?.name || 'el usuario';
+    const owner = (user?.wa?.alias || (user?.name || '').trim().split(/s+/)[0] || 'tu usuario');
     const fmt = (d) => new Date(d).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: '2-digit' });
     const transcript = msgs.map((m) => `[${fmt(m.createdAt)}] ${m.fromMe ? (m.autoReply ? 'CODEC' : owner) : name}: ${m.text}`).join('\n').slice(-30000);
     const summary = await summarizeChat(owner, name, transcript);

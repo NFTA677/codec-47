@@ -434,7 +434,7 @@ Usa SOLO lo que aparece en la conversación; no inventes.`,
 }
 
 export async function quickReply(user, contactName, convo, { mode = 'auto', chatInstructions = '', mood = '', summary = '', introduced = false } = {}) {
-  const owner = user.name || 'tu usuario';
+  const owner = (user?.wa?.alias || (user?.name || '').trim().split(/s+/)[0] || 'tu usuario');
   const sys = `Eres CODEC, el asistente personal de ${owner}. Respondes sus mensajes de WhatsApp mientras él no puede.
 QUIÉN ERES:
 - Eres el ASISTENTE, no eres ${owner}. Nunca te hagas pasar por él: habla de ${owner} en tercera persona ("${owner} está en clase", "le paso tu mensaje").
@@ -443,6 +443,8 @@ QUIÉN ERES:
 CÓMO ESCRIBES:
 - Como una persona real por WhatsApp: natural, amable, corto (1 o 2 frases), sin fórmulas repetidas; en el idioma y el tono del contacto (en español, siempre español latino: nunca "vosotros"). Como mucho un emoji, si encaja.
 - Responde a lo último que dijo la persona usando el contexto de la conversación.
+- Llama a tu usuario SIEMPRE "${owner}" (nunca uses su nombre completo ni apellidos).
+- No repitas frases que ya dijiste antes en esta conversación (por ejemplo, no vuelvas a decir "¿En qué te puedo ayudar?"): varía como lo haría una persona.
 - NO sabes cómo está ${owner}, dónde está ni qué está haciendo (salvo lo que digan sus instrucciones): nunca lo afirmes ni lo supongas (nada de "está bien", "está ocupado").
 - No inventes citas, horarios, compromisos, precios ni datos; no compartas información privada. Si piden confirmar algo, di que se lo consultarás a ${owner}.
 - Si la persona mandó varios mensajes seguidos, responde a todos en un solo mensaje natural.
@@ -461,11 +463,20 @@ Estás hablando con: ${contactName}.`;
       content: 'Escribe ahora el siguiente mensaje para retomar la conversación. Si quedó algo pendiente, respóndelo; si no, pregunta con naturalidad si hay algo más en lo que puedas ayudar.',
     });
   }
+  // Recordatorio final (los modelos lo siguen mucho mejor que las reglas del inicio)
+  const mine = convo.filter((m) => m.fromMe).slice(-6).map((m) => m.text);
+  msgs.push({
+    role: 'system',
+    content: `Recuerda: eres CODEC, el asistente; habla de ${owner} en tercera persona (si preguntan por sus planes o su vida, di que le preguntarás a ${owner}). Responde de forma nueva y natural al último mensaje.${mine.length ? ` NO repitas ninguna de estas frases que ya enviaste: ${mine.map((t) => `"${t.slice(0, 120)}"`).join(' | ')}` : ''}`,
+  });
+  const norm = (t) => String(t || '').toLowerCase().replace(/[^a-záéíóúñü0-9 ]/g, '').replace(/s+/g, ' ').trim();
+  const repeated = (t) => mine.some((p) => norm(p) && norm(p) === norm(t));
   try {
-    // Modelo rápido (~0,5 s) para WhatsApp; si falla o tarda, el grande
+    // Modelo rápido (~0,5 s) para WhatsApp; si falla, tarda o se repite, el grande
     const fast = [process.env.AI_FAST_MODEL || 'nvidia/nemotron-3.5-super-vl-120b-a12b', ...MODELS()].filter((x, i, a) => a.indexOf(x) === i);
-    const m = await callModel(msgs, false, 250, fast, 8000);
-    return cleanReply(m.content).slice(0, 600);
+    let reply = cleanReply((await callModel(msgs, false, 250, fast, 8000)).content);
+    if (!reply || repeated(reply)) reply = cleanReply((await callModel(msgs, false, 250, MODELS(), 15000)).content);
+    return reply.slice(0, 600);
   } catch (e) {
     console.error('[wa reply]', e.message);
     return null;

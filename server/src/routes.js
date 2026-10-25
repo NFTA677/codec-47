@@ -276,7 +276,7 @@ apiRouter.get(
 );
 
 // ---------- WhatsApp ----------
-apiRouter.get('/whatsapp', (req, res) => res.json({ ...waStatus(req.user._id), settings: req.user.wa, defaultIntro: DEFAULT_INTRO(req.user.name) }));
+apiRouter.get('/whatsapp', (req, res) => res.json({ ...waStatus(req.user._id), settings: req.user.wa, defaultIntro: DEFAULT_INTRO(req.user.wa?.alias || (req.user.name || '').trim().split(/s+/)[0]) }));
 apiRouter.post('/whatsapp/connect', wrap(async (req, res) => {
   const phone = req.body?.phone ? String(req.body.phone).replace(/D/g, '') : undefined;
   if (phone !== undefined && phone.length < 8) return res.status(400).json({ error: 'Escribe tu número con código de país, ej. 51987654321' });
@@ -312,6 +312,7 @@ apiRouter.post('/whatsapp/logout', wrap(async (req, res) => {
 apiRouter.patch('/whatsapp/settings', wrap(async (req, res) => {
   const { privacy, replyAll, allow, instructions, intro, introEnabled } = req.body || {};
   if (typeof introEnabled === 'boolean') req.user.wa.introEnabled = introEnabled;
+  if (typeof req.body?.alias === 'string') req.user.wa.alias = req.body.alias.trim().slice(0, 40);
   if (req.body?.introAfterHours !== undefined) req.user.wa.introAfterHours = Math.max(0, Math.min(168, Number(req.body.introAfterHours) || 0));
   if (typeof intro === 'string') req.user.wa.intro = intro.slice(0, 600);
   if (typeof privacy === 'boolean') req.user.wa.privacy = privacy;

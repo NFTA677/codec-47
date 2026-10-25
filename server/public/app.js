@@ -574,6 +574,7 @@ async function loadWhatsApp() {
   $('#wa-allow').value = (w.allow || []).join('\n');
   $('#wa-intro-on').checked = w.introEnabled !== false;
   $('#wa-intro').value = w.intro || '';
+  $('#wa-alias').value = w.alias || '';
   $('#wa-intro-hours').value = w.introAfterHours ?? 3;
   $('#wa-intro').placeholder = st.defaultIntro || '';
   $('#wa-instr').value = w.instructions || '';
@@ -587,6 +588,7 @@ $('#wa-form').onsubmit = async (e) => {
     allow: $('#wa-allow').value.split('\n'),
     introEnabled: $('#wa-intro-on').checked,
     intro: $('#wa-intro').value,
+    alias: $('#wa-alias').value,
     introAfterHours: Number($('#wa-intro-hours').value),
     instructions: $('#wa-instr').value } });
   const btn = e.submitter; if (btn) { btn.textContent = 'Guardado'; setTimeout(() => (btn.textContent = 'Guardar'), 1500); }
