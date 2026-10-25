@@ -33,6 +33,7 @@
       <button class="nav active" data-view="chat">💬 Chat</button>
       <button class="nav" data-view="devices">📱 Dispositivos</button>
       <button class="nav" data-view="servers">🛡️ Servidores</button>
+      <button class="nav" data-view="whatsapp">🟢 WhatsApp</button>
       <button class="nav" data-view="tasks">✅ Pendientes</button>
       <button class="nav" data-view="downloads">⬇️ Descargas</button>
       <button class="nav" data-view="settings">⚙️ Ajustes</button>
@@ -46,6 +47,7 @@
         <header class="topbar">
           <h1>Chat</h1>
           <div class="row">
+            <label class="toggle" title="Al terminar de responder vuelve a escucharte"><input type="checkbox" id="conv-toggle" checked /> Conversación continua</label>
             <label class="toggle"><input type="checkbox" id="tts-toggle" checked /> Voz</label>
             <button class="btn ghost small" id="clear-chat">Borrar historial</button>
           </div>
@@ -93,6 +95,37 @@
         <ul class="tasks" id="task-list"></ul>
       </section>
 
+      <!-- WhatsApp -->
+      <section class="view hidden" id="view-whatsapp">
+        <header class="topbar">
+          <h1>WhatsApp</h1>
+          <span class="badge" id="wa-status">…</span>
+        </header>
+        <div class="grid">
+          <div class="card" id="wa-link-card">
+            <h3>Vincular</h3>
+            <div id="wa-link-body"></div>
+          </div>
+          <div class="card">
+            <h3>🛡️ Modo privacidad</h3>
+            <p class="muted small">Cuando está activo, CODEC 47 responde tus mensajes por ti. También puedes decirle por voz: <i>“activa el modo privacidad y responde solo a mamá y a Carlos”</i>.</p>
+            <form class="form" id="wa-form">
+              <label class="toggle"><input type="checkbox" id="wa-privacy" /> Activar modo privacidad</label>
+              <label class="toggle"><input type="checkbox" id="wa-all" /> Responder a todos (si no, solo a la lista)</label>
+              <label>Responder solo a (nombres o números, uno por línea)
+                <textarea id="wa-allow" rows="4" placeholder="Mamá&#10;Carlos&#10;51987654321"></textarea>
+              </label>
+              <label>Instrucciones para las respuestas
+                <textarea id="wa-instr" rows="3" placeholder="Ej.: Estoy en clase hasta las 6 pm, respondo después."></textarea>
+              </label>
+              <button class="btn primary">Guardar</button>
+            </form>
+          </div>
+        </div>
+        <h2>Mensajes recientes</h2>
+        <div class="audit" id="wa-messages"></div>
+      </section>
+
       <!-- Descargas -->
       <section class="view hidden" id="view-downloads">
         <header class="topbar"><h1>Descargas</h1></header>
@@ -101,7 +134,8 @@
             <div class="dl-icon">🤖</div>
             <h3>App para Android</h3>
             <p class="muted small">Burbuja flotante, voz, linterna, cámara, calendario, música y control del teléfono.</p>
-            <a class="btn primary" href="/downloads/CODEC47.apk" download>Descargar APK</a>
+            <a class="btn primary" href="/downloads/CODEC47.apk" download>Descargar APK <span id="apk-version"></span></a>
+            <p class="muted small">Si ya la tienes instalada, la app te avisará sola cuando haya una versión nueva.</p>
             <ol class="steps small">
               <li>Abre esta página <b>desde tu teléfono</b> y pulsa “Descargar APK”.</li>
               <li>Abre el archivo descargado. Si Android pregunta, permite <i>“Instalar apps desconocidas”</i> para tu navegador.</li>
@@ -144,6 +178,9 @@
           <label>Tu nombre <input id="me-name" /></label>
           <label>Tu ciudad (para el clima) <input id="me-city" /></label>
           <label>Zona horaria <input id="me-tz" /></label>
+          <label>Voz de CODEC 47 (la misma en la web, el teléfono y Chrome)
+            <div class="row"><select id="me-voice"></select><button type="button" class="btn" id="voice-test">▶ Probar</button></div>
+          </label>
           <button class="btn primary">Guardar</button>
         </form>
         <div class="card">

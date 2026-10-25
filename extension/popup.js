@@ -15,13 +15,32 @@ function add(text, user) {
 }
 
 // Voz de CODEC 47: la más natural disponible, frase por frase
-function speak(text) {
+// Voz neuronal de NVIDIA desde el servidor (la misma del teléfono); si falla, la de Chrome
+let audio = null;
+async function speak(text) {
   chrome.tts.stop();
+  audio?.pause();
+  try {
+    const { serverUrl = 'https://codec-47.onrender.com', deviceKey = '' } = await chrome.storage.local.get(['serverUrl', 'deviceKey']);
+    const r = await fetch(serverUrl.replace(/\/+$/, '') + '/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Device-Key': deviceKey },
+      body: JSON.stringify({ text }),
+    });
+    if (!r.ok) throw new Error();
+    audio = new Audio(URL.createObjectURL(await r.blob()));
+    await audio.play();
+  } catch {
+    chromeSpeak(text);
+  }
+}
+
+function chromeSpeak(text) {
   const clean = text.replace(/[\p{Extended_Pictographic}*_#`]/gu, '').replace(/\s+/g, ' ').trim();
   chrome.tts.getVoices((voices) => {
     const es = voices.filter((v) => (v.lang || '').toLowerCase().startsWith('es'));
     const score = (v) =>
-      (/natural|neural/i.test(v.voiceName) ? 100 : 0) + (/google/i.test(v.voiceName) ? 50 : 0) +
+      (/jorge|pablo|alvaro|diego|raul|male/i.test(v.voiceName) ? 120 : 0) + (/natural|neural/i.test(v.voiceName) ? 100 : 0) + (/google/i.test(v.voiceName) ? 50 : 0) +
       (v.remote ? 10 : 0) + (/es-(mx|us|419)/i.test(v.lang) ? 20 : 0);
     const best = es.sort((a, b) => score(b) - score(a))[0];
     chrome.tts.speak(clean, { voiceName: best?.voiceName, lang: best?.lang || 'es-MX', rate: 1.05 });

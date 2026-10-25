@@ -75,7 +75,11 @@ function showView(v) {
   if (v === 'servers') { loadDevices(); loadAudit(); }
   if (v === 'tasks') loadTasks();
   if (v === 'settings') fillSettings();
-  if (v === 'downloads') $('#agent-cmd2').textContent = `node agent.js --server ${location.origin} --key TU_CLAVE`;
+  if (v === 'downloads') {
+    $('#agent-cmd2').textContent = `node agent.js --server ${location.origin} --key TU_CLAVE`;
+    fetch('/downloads/version.json').then((r) => r.json()).then((j) => ($('#apk-version').textContent = 'v' + j.versionName)).catch(() => {});
+  }
+  if (v === 'whatsapp') loadWhatsApp();
 }
 
 // ---------------- Chat ----------------
@@ -92,14 +96,16 @@ async function loadMessages() {
   if (!msgs.length) addMsg('assistant', `¡Hola${state.user?.name ? ' ' + state.user.name : ''}! Soy CODEC 47. Pregúntame la hora, el clima, tus pendientes o dime que ponga música en tu PC.`);
   for (const m of msgs) addMsg(m.role, m.content, m.source !== 'web' ? `desde ${m.source}` : '');
 }
-async function sendChat(text) {
+async function sendChat(text, fromVoice = false) {
   if (!text.trim()) return;
   addMsg('user', text);
   $('#orb').classList.add('thinking');
   try {
     const r = await api('/chat', { method: 'POST', body: { text } });
     addMsg('assistant', r.text, '', r.actions);
-    speak(r.text);
+    // En conversación por voz, al terminar de hablar vuelve a escuchar (salvo que te despidas)
+    const bye = /^(ad[ií]os|chao|eso es todo|gracias,? eso es todo|para|detente|silencio|nada m[aá]s)/i.test(text.trim());
+    speak(r.text, fromVoice && !bye);
   } catch (e) {
     addMsg('assistant', '⚠️ ' + e.message);
   } finally { $('#orb').classList.remove('thinking'); }
@@ -116,66 +122,75 @@ $('#clear-chat').onclick = async () => {
   loadMessages();
 };
 
-// Voz: hablar (TTS) y escuchar (reconocimiento de voz del navegador)
+// ---------------- Voz ----------------
+// Habla con la voz neuronal de NVIDIA (la misma del teléfono). Si falla, usa la del navegador.
 $('#tts-toggle').checked = localStorageGet('c47_tts') !== '0';
 $('#tts-toggle').onchange = (e) => localStorageSet('c47_tts', e.target.checked ? '1' : '0');
-// Elige la voz en español más natural disponible en el navegador
-let bestVoice = null;
-function pickVoice() {
-  const voices = speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith('es'));
-  const score = (v) => {
-    const n = v.name.toLowerCase();
-    const l = v.lang.toLowerCase();
-    let s = 0;
-    if (n.includes('natural') || n.includes('neural')) s += 100; // Edge: voces neuronales
-    if (n.includes('online')) s += 40;
-    if (n.includes('google')) s += 50; // Chrome: voces de Google en la nube
-    if (/es-(mx|us|419|co|ar|pe|cl)/.test(l)) s += 20;
-    if (l === 'es-mx') s += 10;
-    if (!v.localService) s += 5;
-    return s;
-  };
-  bestVoice = voices.sort((a, b) => score(b) - score(a))[0] || null;
+$('#conv-toggle').checked = localStorageGet('c47_conv') !== '0';
+$('#conv-toggle').onchange = (e) => localStorageSet('c47_conv', e.target.checked ? '1' : '0');
+
+let audioEl = null;
+function stopSpeaking() {
+  if (audioEl) { audioEl.pause(); audioEl = null; }
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
 }
-if ('speechSynthesis' in window) {
-  pickVoice();
-  speechSynthesis.onvoiceschanged = pickVoice;
-}
-function speak(text) {
-  if (!$('#tts-toggle').checked || !('speechSynthesis' in window)) return;
-  speechSynthesis.cancel();
-  const clean = text.replace(/[\p{Extended_Pictographic}*_#`]/gu, '').replace(/\s+/g, ' ').trim();
-  // Frase por frase: suena más fluido y Chrome no corta los textos largos
-  const parts = clean.match(/[^.!?¡¿]+[.!?]*|[¡¿][^.!?]+[.!?]*/g) || [clean];
-  for (const p of parts) {
-    if (!p.trim()) continue;
-    const u = new SpeechSynthesisUtterance(p.trim());
-    u.lang = bestVoice?.lang || 'es-MX';
-    if (bestVoice) u.voice = bestVoice;
-    u.rate = 1.05;
-    u.pitch = 1;
-    speechSynthesis.speak(u);
+async function speak(text, thenListen = false, voice) {
+  stopSpeaking();
+  const after = () => { $('#orb').classList.remove('speaking'); if (thenListen && $('#conv-toggle').checked) setTimeout(startMic, 250); };
+  if (!$('#tts-toggle').checked) return after();
+  $('#orb').classList.add('speaking');
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + state.token },
+      body: JSON.stringify({ text, voice }),
+    });
+    if (!res.ok) throw new Error('tts ' + res.status);
+    const url = URL.createObjectURL(await res.blob());
+    const a = new Audio(url);
+    audioEl = a;
+    a.onended = () => { URL.revokeObjectURL(url); if (audioEl === a) { audioEl = null; after(); } };
+    await a.play();
+  } catch (e) {
+    browserSpeak(text, after);
   }
 }
+function browserSpeak(text, done) {
+  if (!('speechSynthesis' in window)) return done();
+  const voices = speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith('es'));
+  const male = voices.find((v) => /jorge|pablo|alvaro|diego|raul|male|hombre/i.test(v.name)) || voices[0];
+  const parts = text.replace(/[p{Extended_Pictographic}*_#`]/gu, '').match(/[^.!?¡¿]+[.!?]*|[¡¿][^.!?]+[.!?]*/g) || [text];
+  parts.forEach((p, i) => {
+    const u = new SpeechSynthesisUtterance(p.trim());
+    if (male) u.voice = male;
+    u.lang = male?.lang || 'es-MX';
+    u.rate = 1.05;
+    u.pitch = 0.85;
+    if (i === parts.length - 1) u.onend = done;
+    speechSynthesis.speak(u);
+  });
+}
+
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null;
-$('#mic').onclick = () => {
+function startMic() {
   if (!SR) return alert('Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.');
-  if (rec) { rec.stop(); return; }
-  speechSynthesis?.cancel();
+  if (rec) return;
+  stopSpeaking();
   rec = new SR();
-  rec.lang = 'es-MX';
+  rec.lang = 'es-PE';
   rec.interimResults = true;
   rec.onresult = (e) => {
     const t = Array.from(e.results).map((r) => r[0].transcript).join('');
     $('#chat-input').value = t;
-    if (e.results[e.results.length - 1].isFinal) { $('#chat-input').value = ''; sendChat(t); }
+    if (e.results[e.results.length - 1].isFinal) { $('#chat-input').value = ''; rec?.stop(); sendChat(t, true); }
   };
   rec.onend = () => { rec = null; $('#mic').classList.remove('on'); $('#orb').classList.remove('listening'); };
   rec.start();
   $('#mic').classList.add('on');
   $('#orb').classList.add('listening');
-};
+}
+$('#mic').onclick = () => (rec ? rec.stop() : startMic());
 
 // ---------------- Dispositivos ----------------
 const TYPE_LABEL = { android: 'Android', chrome: 'Chrome', pc: 'PC', server: 'Servidor' };
@@ -356,7 +371,75 @@ $('#task-form').onsubmit = async (e) => {
 };
 
 // ---------------- Ajustes ----------------
+async function loadVoices() {
+  const { voices, current } = await api('/voices');
+  $('#me-voice').innerHTML = '';
+  for (const v of voices) {
+    const o = el('option', { value: v.id }, v.label);
+    if (v.id === current) o.selected = true;
+    $('#me-voice').append(o);
+  }
+}
+$('#voice-test').onclick = () =>
+  speak(`Hola${state.user?.name ? ' ' + state.user.name : ''}. Soy CODEC 47. Todos los sistemas están en línea. ¿En qué puedo ayudarte?`, false, $('#me-voice').value);
+
+// ---------------- WhatsApp ----------------
+function renderWaStatus(st) {
+  const labels = { conectado: '● vinculado', qr: 'escanea el QR', conectando: 'conectando…', reconectando: 'reconectando…', desconectado: 'sin vincular' };
+  $('#wa-status').textContent = labels[st.status] || st.status;
+  const b = $('#wa-link-body');
+  b.innerHTML = '';
+  if (st.status === 'conectado') {
+    b.append(
+      el('p', {}, 'WhatsApp vinculado ', el('span', { class: 'wa-me' }, st.me ? `(${st.me.name || ''} +${st.me.id})` : '')),
+      el('p', { class: 'muted small' }, 'Ya puedes decirle a CODEC 47: “envía un WhatsApp a Carlos diciendo que llego en 10”, “mándale mi ubicación a mamá”, “envíale la última foto a Ana”, “léeme mis WhatsApp”.'),
+      el('button', { class: 'btn ghost danger', onclick: async () => { if (confirm('¿Desvincular WhatsApp?')) { await api('/whatsapp/logout', { method: 'POST' }); loadWhatsApp(); } } }, 'Desvincular')
+    );
+  } else if (st.status === 'qr' && st.qr) {
+    b.append(
+      el('ol', { class: 'steps small' },
+        el('li', {}, 'Abre WhatsApp en tu teléfono.'),
+        el('li', {}, 'Toca ⋮ (o Configuración) → Dispositivos vinculados → Vincular un dispositivo.'),
+        el('li', {}, 'Escanea este código:')),
+      el('img', { class: 'qr', src: st.qr, alt: 'Código QR de WhatsApp' })
+    );
+  } else if (st.status === 'conectando' || st.status === 'reconectando') {
+    b.append(el('p', { class: 'muted' }, 'Generando el código…'));
+  } else {
+    b.append(
+      el('p', { class: 'muted small' }, 'CODEC 47 se conecta como un “dispositivo vinculado”, igual que WhatsApp Web. Tu teléfono sigue funcionando normal.'),
+      el('p', { class: 'muted small' }, '⚠️ Es una conexión no oficial: WhatsApp podría limitar cuentas que envían mensajes automáticos en exceso. Úsalo con moderación.'),
+      el('button', { class: 'btn primary', onclick: async () => renderWaStatus(await api('/whatsapp/connect', { method: 'POST' })) }, 'Vincular WhatsApp')
+    );
+  }
+}
+const waRow = (m) => el('div', { class: 'ev' },
+  el('span', { class: 'muted' }, new Date(m.at || Date.now()).toLocaleString()),
+  el('span', { class: m.from === 'yo' ? 'sev-info' : 'sev-warn' }, m.from === 'yo' ? (m.auto ? '🤖 CODEC 47' : 'Tú') : m.from),
+  el('span', {}, m.text));
+async function loadWhatsApp() {
+  const st = await api('/whatsapp');
+  renderWaStatus(st);
+  const w = st.settings || {};
+  $('#wa-privacy').checked = !!w.privacy;
+  $('#wa-all').checked = !!w.replyAll;
+  $('#wa-allow').value = (w.allow || []).join('\n');
+  $('#wa-instr').value = w.instructions || '';
+  const msgs = await api('/whatsapp/messages?limit=40');
+  $('#wa-messages').innerHTML = '';
+  if (!msgs.length) $('#wa-messages').append(el('p', { class: 'muted' }, 'Sin mensajes todavía.'));
+  for (const m of msgs) $('#wa-messages').append(waRow(m));
+}
+$('#wa-form').onsubmit = async (e) => {
+  e.preventDefault();
+  await api('/whatsapp/settings', { method: 'PATCH', body: {
+    privacy: $('#wa-privacy').checked, replyAll: $('#wa-all').checked,
+    allow: $('#wa-allow').value.split('\n'), instructions: $('#wa-instr').value } });
+  alert('Guardado');
+};
+
 function fillSettings() {
+  loadVoices().catch(() => {});
   $('#me-name').value = state.user?.name || '';
   $('#me-city').value = state.user?.city || '';
   $('#me-tz').value = state.user?.tz || '';
@@ -364,7 +447,7 @@ function fillSettings() {
 }
 $('#me-form').onsubmit = async (e) => {
   e.preventDefault();
-  state.user = await api('/me', { method: 'PATCH', body: { name: $('#me-name').value, city: $('#me-city').value, tz: $('#me-tz').value } });
+  state.user = await api('/me', { method: 'PATCH', body: { name: $('#me-name').value, city: $('#me-city').value, tz: $('#me-tz').value, voice: $('#me-voice').value } });
   alert('Guardado');
 };
 
@@ -393,6 +476,9 @@ function connectWS() {
       if (m.event.severity === 'high' && 'Notification' in window && Notification.permission === 'granted')
         new Notification('CODEC 47 · ' + (m.event.deviceName || ''), { body: m.event.detail });
     }
+    if (m.type === 'wa' && !$('#view-whatsapp').classList.contains('hidden')) renderWaStatus(m);
+    if (m.type === 'wa_msg' && !$('#view-whatsapp').classList.contains('hidden'))
+      $('#wa-messages').prepend(waRow({ from: m.fromMe ? 'yo' : m.name, text: m.text, auto: m.autoReply }));
     if (m.type === 'chat') {
       // Conversación hecha desde otro dispositivo (ej. el teléfono): se continúa aquí
       addMsg('user', m.user, 'desde ' + m.source);

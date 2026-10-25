@@ -50,6 +50,10 @@ input:focus, select:focus { outline: 2px solid var(--accent-2); outline-offset: 
   background: radial-gradient(circle at 30% 30%, var(--accent-2), var(--accent));
   box-shadow: 0 0 14px var(--accent);
 }
+.orb.speaking { animation: pulse .45s infinite alternate; }
+textarea { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font: inherit; width: 100%; resize: vertical; }
+.qr { background: #fff; padding: 10px; border-radius: 12px; width: 260px; max-width: 100%; display: block; margin: 10px 0; }
+.wa-me { color: var(--accent); font-weight: 600; }
 .orb.thinking { animation: pulse 1s infinite alternate; }
 .orb.listening { background: radial-gradient(circle at 30% 30%, #fff, var(--danger)); box-shadow: 0 0 18px var(--danger); }
 @keyframes pulse { to { transform: scale(1.35); box-shadow: 0 0 26px var(--accent-2); } }

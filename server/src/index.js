@@ -8,6 +8,7 @@ import { connectDB } from './db.js';
 import { apiRouter } from './routes.js';
 import { attachWS } from './hub.js';
 import { Device } from './models.js';
+import { startAllWhatsApp } from './whatsapp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../..');
@@ -50,6 +51,8 @@ attachWS(server);
 await connectDB();
 // Al reiniciar, nadie está conectado todavía
 await Device.updateMany({}, { online: false });
+// Reconecta WhatsApp si ya estaba vinculado
+startAllWhatsApp().catch((e) => console.error('[wa]', e.message));
 
 const PORT = Number(process.env.PORT) || 3000;
 server.listen(PORT, () => console.log(`[codec47] escuchando en http://localhost:${PORT}`));

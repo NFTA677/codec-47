@@ -119,8 +119,20 @@ async function clickInTab(tabId, selectors) {
 }
 
 const ACTIONS = {
-  async play_music({ query = '', service = 'youtube' }) {
+  async play_music({ query = '', service = 'youtube', videoId, title }) {
     const q = encodeURIComponent(query);
+    // El servidor ya encontró el video exacto: abrirlo directamente hace que suene solo
+    if (videoId && service !== 'spotify') {
+      const url = service === 'youtube_music' ? `https://music.youtube.com/watch?v=${videoId}` : `https://www.youtube.com/watch?v=${videoId}`;
+      const tab = await openOrReuse(service === 'youtube_music' ? 'https://music.youtube.com/' : 'https://www.youtube.com/', url);
+      await waitForLoad(tab.id);
+      // Si el navegador bloqueó el autoplay, pulsa play
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => setTimeout(() => { const v = document.querySelector('video'); if (v && v.paused) v.play().catch(() => document.querySelector('.ytp-play-button')?.click()); }, 1500),
+      }).catch(() => {});
+      return `Reproduciendo "${title || query}"`;
+    }
     if (service === 'spotify') {
       const tab = await openOrReuse('https://open.spotify.com/', `https://open.spotify.com/search/${q}`);
       await waitForLoad(tab.id);

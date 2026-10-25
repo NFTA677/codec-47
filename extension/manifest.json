@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "CODEC 47",
   "description": "Conecta Chrome con tu asistente CODEC 47: música, pestañas y control por voz desde tu teléfono.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "minimum_chrome_version": "116",
   "permissions": [
     "storage",
@@ -15,7 +15,8 @@
   "host_permissions": [
     "https://www.youtube.com/*",
     "https://music.youtube.com/*",
-    "https://open.spotify.com/*"
+    "https://open.spotify.com/*",
+    "https://*.onrender.com/*"
   ],
   "background": {
     "service_worker": "background.js",

@@ -33,6 +33,14 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.util.Locale
+import android.media.MediaPlayer
+import java.io.File
+import java.util.concurrent.TimeUnit
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import kotlin.math.abs
 
 /**
@@ -83,9 +91,9 @@ class AssistantService : Service(), Hub.Listener {
         }, googleTts)
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
-            override fun onDone(id: String?) = main.post { speaking = false; releaseFocus(); maybeResumeHandsFree() }.let {}
+            override fun onDone(id: String?) = onSpeechDone()
             @Deprecated("Deprecated in Java")
-            override fun onError(id: String?) = main.post { speaking = false; releaseFocus() }.let {}
+            override fun onError(id: String?) = onSpeechDone()
         })
         Hub.commandHandler = { id, action, params -> executor.handle(id, action, params) }
         Hub.listeners.add(this)
@@ -99,6 +107,7 @@ class AssistantService : Service(), Hub.Listener {
         if (!fromBoot) {
             if (has(Manifest.permission.RECORD_AUDIO)) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             if (has(Manifest.permission.CAMERA)) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            if (has(Manifest.permission.ACCESS_FINE_LOCATION)) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
         }
         try {
             startForeground(1, buildNotification("Conectando…"), types)
@@ -108,6 +117,9 @@ class AssistantService : Service(), Hub.Listener {
         showBubble()
         Hub.start(this)
         if (Prefs.handsFree(this)) main.postDelayed({ listen(handsFree = true) }, 1500)
+        // Busca actualizaciones al iniciar y cada 6 horas
+        main.removeCallbacks(updateCheck)
+        main.postDelayed(updateCheck, 20_000)
         return START_STICKY
     }
 
@@ -120,6 +132,13 @@ class AssistantService : Service(), Hub.Listener {
         bubble?.let { getSystemService(WindowManager::class.java).removeView(it) }
         instance = null
         super.onDestroy()
+    }
+
+    private val updateCheck = object : Runnable {
+        override fun run() {
+            Updater.checkInBackground(this@AssistantService)
+            main.postDelayed(this, 6 * 3600_000L)
+        }
     }
 
     private fun has(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
@@ -171,7 +190,8 @@ class AssistantService : Service(), Hub.Listener {
 
     override fun onChatReply(text: String) {
         showText(text)
-        speak(text)
+        speak(text, followUp = expectVoiceReply)
+        expectVoiceReply = false
     }
 
     // ---------------- Burbuja flotante ----------------
@@ -234,7 +254,7 @@ class AssistantService : Service(), Hub.Listener {
                 MotionEvent.ACTION_UP -> if (!moved) {
                     if (System.currentTimeMillis() - down > 600) {
                         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    } else if (listening) stopListening() else listen()
+                    } else if (speaking) { stopPlayback(); speaking = false; pendingFollowUp = false; releaseFocus() } else if (listening) stopListening() else listen()
                 }
             }
             true
@@ -275,23 +295,88 @@ class AssistantService : Service(), Hub.Listener {
         focusRequest = null
     }
 
-    fun speak(text: String) {
-        if (!ttsReady || text.isBlank()) return
+    // ---------------- Voz: NVIDIA Magpie desde el servidor (igual que en la web) ----------------
+    private val http = OkHttpClient.Builder().callTimeout(25, TimeUnit.SECONDS).build()
+    private var player: MediaPlayer? = null
+    private var pendingFollowUp = false
+    private var expectVoiceReply = false
+
+    private fun stopPlayback() {
+        player?.let { try { it.stop() } catch (_: Exception) {}; it.release() }
+        player = null
+        tts?.stop()
+    }
+
+    /** Habla el texto. Si followUp = true, al terminar vuelve a escuchar (conversación continua). */
+    fun speak(text: String, followUp: Boolean = false) {
+        val clean = text.replace(Regex("[\\p{So}\\p{Sk}*_#`]"), "").replace(Regex("\\s+"), " ").trim()
+        if (clean.isBlank()) return
         main.post {
-            stopListening()
+            if (listening) { listening = false; recognizer?.cancel(); orb?.text = "47" }
+            stopPlayback()
             speaking = true
+            pendingFollowUp = followUp
             duck()
-            val params = Bundle().apply { putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC) }
-            // Sin emojis ni símbolos (si no, los lee en voz alta: "cara sonriente")
-            val clean = text.replace(Regex("[\\p{So}\\p{Sk}*_#`]"), "").replace(Regex("\\s+"), " ").trim()
-            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, params, "reply-${System.currentTimeMillis()}")
+        }
+        Thread {
+            val file = try { fetchVoice(clean) } catch (e: Exception) { null }
+            main.post { if (file != null) playFile(file) else localSpeak(clean) }
+        }.start()
+    }
+
+    private fun fetchVoice(text: String): File? {
+        val server = Prefs.server(this).trimEnd('/')
+        val key = Prefs.key(this)
+        if (server.isBlank() || key.isBlank()) return null
+        val body = JSONObject().put("text", text).toString().toRequestBody("application/json".toMediaType())
+        val req = Request.Builder().url("$server/api/tts").header("X-Device-Key", key).post(body).build()
+        http.newCall(req).execute().use { res ->
+            if (!res.isSuccessful) return null
+            val f = File(cacheDir, "voz-${System.currentTimeMillis()}.wav")
+            f.outputStream().use { out -> res.body!!.byteStream().copyTo(out) }
+            return f
+        }
+    }
+
+    private fun playFile(f: File) {
+        try {
+            player = MediaPlayer().apply {
+                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                setDataSource(f.path)
+                setOnCompletionListener { release(); if (player === this) player = null; f.delete(); onSpeechDone() }
+                setOnErrorListener { mp, _, _ -> mp.release(); if (player === mp) player = null; f.delete(); onSpeechDone(); true }
+                prepare()
+                start()
+            }
+        } catch (e: Exception) {
+            f.delete()
+            onSpeechDone()
+        }
+    }
+
+    private fun localSpeak(text: String) {
+        if (!ttsReady) return onSpeechDone()
+        val params = Bundle().apply { putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC) }
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "reply-${System.currentTimeMillis()}")
+    }
+
+    private fun onSpeechDone() {
+        main.post {
+            if (!speaking) return@post
+            speaking = false
+            val again = pendingFollowUp && Prefs.conversation(this)
+            pendingFollowUp = false
+            if (again) main.postDelayed({ if (!speaking && !listening) listen(followUp = true) }, 250)
+            else { releaseFocus(); maybeResumeHandsFree() }
         }
     }
 
     // ---------------- Reconocimiento de voz ----------------
     private var handsFreeSession = false
 
-    fun listen(handsFree: Boolean = false) {
+    private var followUpSession = false
+
+    fun listen(handsFree: Boolean = false, followUp: Boolean = false) {
         main.post {
             if (!has(Manifest.permission.RECORD_AUDIO)) {
                 showText("Necesito permiso de micrófono. Ábreme para concederlo.")
@@ -301,9 +386,10 @@ class AssistantService : Service(), Hub.Listener {
                 showText("Este teléfono no tiene reconocimiento de voz (instala la app de Google).")
                 return@post
             }
-            tts?.stop()
+            stopPlayback()
             speaking = false
             handsFreeSession = handsFree
+            followUpSession = followUp
             recognizer?.destroy()
             recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply { setRecognitionListener(recListener) }
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
@@ -330,7 +416,7 @@ class AssistantService : Service(), Hub.Listener {
     }
 
     private val recListener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) { if (!handsFreeSession) showText("Te escucho…", 15000) }
+        override fun onReadyForSpeech(params: Bundle?) { if (!handsFreeSession) showText(if (followUpSession) "¿Algo más?…" else "Te escucho…", 15000) }
         override fun onBeginningOfSpeech() {}
         override fun onRmsChanged(rmsdB: Float) { orb?.scaleX = 1f + (rmsdB.coerceIn(0f, 10f) / 40f); orb?.scaleY = orb?.scaleX ?: 1f }
         override fun onBufferReceived(buffer: ByteArray?) {}
@@ -345,7 +431,8 @@ class AssistantService : Service(), Hub.Listener {
         override fun onError(error: Int) {
             listening = false
             orb?.text = "47"
-            if (!handsFreeSession && error != SpeechRecognizer.ERROR_CLIENT) showText("No te escuché bien. Toca la burbuja para intentar otra vez.", 4000)
+            if (!handsFreeSession && !followUpSession && error != SpeechRecognizer.ERROR_CLIENT) showText("No te escuché bien. Toca la burbuja para intentar otra vez.", 4000)
+            if (followUpSession) bubbleText?.visibility = TextView.GONE
             if (!speaking) releaseFocus()
             maybeResumeHandsFree()
         }
@@ -367,8 +454,11 @@ class AssistantService : Service(), Hub.Listener {
         }
     }
 
-    fun sendToAssistant(text: String) {
+    private val BYE = Regex("^(ad[ií]os|chao|eso es todo|gracias,? eso es todo|para|detente|silencio|nada m[aá]s|ya est[aá])\\b", RegexOption.IGNORE_CASE)
+
+    fun sendToAssistant(text: String, fromVoice: Boolean = true) {
         showText("“$text”", 15000)
+        expectVoiceReply = fromVoice && !BYE.containsMatchIn(text.trim())
         MainActivity.onUserSaid(text)
         if (!Hub.sendChat(text)) {
             showText("Sin conexión con el servidor (${Hub.status}).")

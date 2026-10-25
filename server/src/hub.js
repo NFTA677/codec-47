@@ -128,7 +128,7 @@ async function handleDeviceMessage(device, ws, msg) {
 }
 
 export function attachWS(server) {
-  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1024 * 1024 });
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 8 * 1024 * 1024 });
 
   wss.on('connection', (ws) => {
     ws.isAlive = true;

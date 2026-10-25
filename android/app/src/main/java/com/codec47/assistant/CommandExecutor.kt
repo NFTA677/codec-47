@@ -1,6 +1,16 @@
 package com.codec47.assistant
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.location.Location
+import android.location.LocationManager
+import android.os.Build
+import android.util.Base64
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import android.app.SearchManager
 import android.content.ContentUris
 import android.content.ContentValues
@@ -31,7 +41,7 @@ class CommandExecutor(private val svc: AssistantService) {
         val ACTIONS = listOf(
             "flashlight", "take_photo", "open_camera", "play_music", "media", "volume", "bluetooth", "wifi",
             "add_calendar_event", "list_calendar_events", "read_emails", "read_notifications", "open_app",
-            "call", "navigate", "set_alarm", "set_timer", "global", "battery", "speak",
+            "call", "navigate", "set_alarm", "set_timer", "global", "battery", "speak", "get_location", "get_last_photo",
         )
     }
 
@@ -62,7 +72,10 @@ class CommandExecutor(private val svc: AssistantService) {
 
     private fun launch(i: Intent) {
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        svc.startActivity(i)
+        // Desde el servicio de accesibilidad Android permite abrir apps aunque estemos en segundo plano
+        // (Honor/Xiaomi bloquean las aperturas desde un servicio normal)
+        val a11y = ControlAccessibilityService.instance
+        if (a11y != null) a11y.startActivity(i) else svc.startActivity(i)
     }
 
     private fun installed(pkg: String) = try {
@@ -83,7 +96,11 @@ class CommandExecutor(private val svc: AssistantService) {
             launch(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)); "Cámara abierta"
         }
 
-        "play_music" -> playMusic(p.optString("query"), p.optString("app"))
+        "play_music" -> playMusic(p)
+
+        "get_location" -> getLocation()
+
+        "get_last_photo" -> lastPhoto()
 
         "media" -> {
             val code = when (p.optString("cmd", "play")) {
@@ -189,27 +206,86 @@ class CommandExecutor(private val svc: AssistantService) {
         else -> throw Exception("Acción no soportada en Android: $action")
     }
 
-    private fun playMusic(query: String, app: String): String {
-        val pkg = when (app) {
-            "spotify" -> "com.spotify.music"
-            "youtube" -> "com.google.android.youtube"
-            "youtube_music" -> "com.google.android.apps.youtube.music"
-            else -> listOf("com.google.android.apps.youtube.music", "com.spotify.music", "com.google.android.youtube").firstOrNull { installed(it) }
-        } ?: "com.google.android.youtube"
+    private fun playMusic(p: JSONObject): String {
+        val query = p.optString("query", "música")
+        val app = p.optString("app", p.optString("service"))
+        val videoId = p.optString("videoId")
+        val title = p.optString("title", query)
 
-        if (pkg == "com.google.android.youtube" || !installed(pkg)) {
-            // YouTube no admite "reproducir desde búsqueda": abrimos los resultados
-            val i = Intent(Intent.ACTION_SEARCH).setPackage("com.google.android.youtube").putExtra(SearchManager.QUERY, query)
-            if (installed("com.google.android.youtube")) launch(i)
-            else launch(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query))))
-            return "Busqué \"$query\" en YouTube"
+        // Spotify: "reproducir desde búsqueda" (Spotify la soporta y empieza a sonar sola)
+        if (app == "spotify" && installed("com.spotify.music")) {
+            launch(Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+                .setPackage("com.spotify.music")
+                .putExtra(SearchManager.QUERY, query)
+                .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*"))
+            return "Reproduciendo \"$query\" en Spotify"
         }
-        // Spotify y YouTube Music reproducen directamente
-        launch(Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
-            .setPackage(pkg)
-            .putExtra(SearchManager.QUERY, query)
-            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*"))
-        return "Reproduciendo \"$query\""
+
+        // El servidor ya buscó el video exacto: abrirlo hace que se reproduzca solo
+        if (videoId.isNotBlank()) {
+            val ytMusic = "com.google.android.apps.youtube.music"
+            if (app == "youtube_music" && installed(ytMusic)) {
+                launch(Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/watch?v=$videoId")).setPackage(ytMusic))
+            } else if (installed("com.google.android.youtube")) {
+                launch(Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$videoId")).setPackage("com.google.android.youtube")
+                    .putExtra("force_fullscreen", false))
+            } else {
+                launch(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$videoId")))
+            }
+            return "Reproduciendo \"$title\""
+        }
+
+        // Sin video: YouTube Music sí reproduce desde búsqueda; YouTube solo busca
+        val ytm = "com.google.android.apps.youtube.music"
+        if (installed(ytm)) {
+            launch(Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).setPackage(ytm)
+                .putExtra(SearchManager.QUERY, query).putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*"))
+            return "Reproduciendo \"$query\" en YouTube Music"
+        }
+        launch(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query))))
+        return "Busqué \"$query\" en YouTube"
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun getLocation(): JSONObject {
+        requirePerm(Manifest.permission.ACCESS_FINE_LOCATION, "ubicación")
+        val lm = svc.getSystemService(LocationManager::class.java)
+        val provider = when {
+            lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
+            lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+            else -> throw Exception("La ubicación del teléfono está desactivada")
+        }
+        var loc: Location? = null
+        if (Build.VERSION.SDK_INT >= 30) {
+            val latch = CountDownLatch(1)
+            lm.getCurrentLocation(provider, null, svc.mainExecutor) { l -> loc = l; latch.countDown() }
+            latch.await(15, TimeUnit.SECONDS)
+        }
+        if (loc == null) loc = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+            .mapNotNull { lm.getLastKnownLocation(it) }.maxByOrNull { it.time }
+        val l = loc ?: throw Exception("No pude obtener la ubicación (prueba al aire libre)")
+        return JSONObject().put("lat", l.latitude).put("lng", l.longitude).put("accuracy_m", l.accuracy.toInt())
+            .put("maps", "https://maps.google.com/?q=${l.latitude},${l.longitude}")
+    }
+
+    /** Última foto de la galería, reducida a 1280 px, en base64 (para enviarla por WhatsApp). */
+    private fun lastPhoto(): JSONObject {
+        val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
+        requirePerm(perm, "fotos")
+        val uri = svc.contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Images.Media._ID), null, null,
+            "${MediaStore.Images.Media.DATE_ADDED} DESC"
+        )?.use { c -> if (c.moveToFirst()) ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, c.getLong(0)) else null }
+            ?: throw Exception("No hay fotos en la galería")
+        val src = ImageDecoder.createSource(svc.contentResolver, uri)
+        val bmp = ImageDecoder.decodeBitmap(src) { dec, info, _ ->
+            val max = maxOf(info.size.width, info.size.height)
+            if (max > 1280) dec.setTargetSize(info.size.width * 1280 / max, info.size.height * 1280 / max)
+            dec.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        }
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, 82, out)
+        return JSONObject().put("base64", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP))
     }
 
     private fun openApp(name: String): String {

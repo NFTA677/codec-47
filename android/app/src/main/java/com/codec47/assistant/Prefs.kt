@@ -11,6 +11,10 @@ object Prefs {
     fun key(c: Context) = sp(c).getString("key", "") ?: ""
     fun handsFree(c: Context) = sp(c).getBoolean("handsFree", false)
     fun autoStart(c: Context) = sp(c).getBoolean("autoStart", true)
+    fun conversation(c: Context) = sp(c).getBoolean("conversation", true)
+    fun setConversation(c: Context, v: Boolean) = sp(c).edit().putBoolean("conversation", v).apply()
+    fun bgTipShown(c: Context) = sp(c).getBoolean("bgTip", false)
+    fun setBgTipShown(c: Context) = sp(c).edit().putBoolean("bgTip", true).apply()
 
     fun save(c: Context, server: String, key: String) =
         sp(c).edit().putString("server", server.trim().trimEnd('/')).putString("key", key.trim()).apply()

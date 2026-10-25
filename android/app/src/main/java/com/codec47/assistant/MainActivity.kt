@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
@@ -35,6 +36,9 @@ class MainActivity : Activity(), Hub.Listener {
             Manifest.permission.CALL_PHONE,
             Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.READ_MEDIA_IMAGES,
         )
     }
 
@@ -58,6 +62,7 @@ class MainActivity : Activity(), Hub.Listener {
 
     private fun handleIntent(i: Intent?) {
         // Abierta desde "Hablar" en la notificación o como asistente del sistema
+        if (i?.getBooleanExtra("update", false) == true) Updater.downloadAndInstall(this)
         if (i?.getBooleanExtra("listen", false) == true || i?.action == Intent.ACTION_ASSIST) {
             window.decorView.postDelayed({ AssistantService.instance?.listen() }, 400)
         }
@@ -166,6 +171,24 @@ class MainActivity : Activity(), Hub.Listener {
         }
         root.addView(handsFree, lp())
 
+        val conversation = CheckBox(this).apply {
+            text = "Conversación continua: después de responder, vuelve a escucharte"
+            setTextColor(0xFF8B97AD.toInt())
+            isChecked = Prefs.conversation(this@MainActivity)
+            setOnCheckedChangeListener { _, v -> Prefs.setConversation(this@MainActivity, v) }
+        }
+        root.addView(conversation, lp(0))
+
+        // Versión + actualizaciones
+        val ver = TextView(this).apply { textSize = 12f; setTextColor(0xFF8B97AD.toInt()); text = "Versión ${Updater.currentName(this@MainActivity)}" }
+        root.addView(ver, lp(4))
+        Updater.checkInBackground(this) { info ->
+            if (info != null) {
+                ver.text = "Versión ${Updater.currentName(this)} → hay una nueva: v${info.name}"
+                root.addView(styledButton("⬆ Actualizar a v${info.name}", primary = true) { Updater.downloadAndInstall(this) }, root.indexOfChild(ver) + 1, lp(4))
+            }
+        }
+
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(styledButton("⚙ Configurar") { config.visibility = if (config.visibility == View.GONE) View.VISIBLE else View.GONE },
             LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = px(6) })
@@ -222,6 +245,14 @@ class MainActivity : Activity(), Hub.Listener {
             items += "Permitir leer notificaciones (correos)" to { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
         if (RUNTIME_PERMS.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED })
             items += "Conceder micrófono, cámara, calendario…" to { requestPermissions(RUNTIME_PERMS, 1) }
+
+        // Honor, Xiaomi, Huawei, Oppo...: bloquean que las apps abran otras apps en segundo plano
+        if (!Prefs.bgTipShown(this) && Build.MANUFACTURER.lowercase() in setOf("honor", "huawei", "xiaomi", "redmi", "poco", "oppo", "vivo", "realme", "oneplus"))
+            items += "Permitir “abrir en segundo plano / ventanas emergentes” (${Build.MANUFACTURER})" to {
+                Prefs.setBgTipShown(this)
+                android.widget.Toast.makeText(this, "En Permisos activa: Mostrar ventanas emergentes / Inicio automático / Abrir en segundo plano", android.widget.Toast.LENGTH_LONG).show()
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
 
         for ((label, action) in items) permBox.addView(styledButton("⚠ $label", onClick = action), lp(6))
     }

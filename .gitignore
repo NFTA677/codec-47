@@ -16,3 +16,4 @@ android/.kotlin/
 # Credenciales descargadas de Atlas
 atlas-credentials*.env
 !server/public/downloads/*.apk
+voces-muestra/

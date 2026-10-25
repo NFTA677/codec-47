@@ -9,9 +9,46 @@ const UserSchema = new Schema(
     name: { type: String, default: '' },
     city: { type: String, default: '' },
     tz: { type: String, default: () => process.env.DEFAULT_TZ || 'America/Mexico_City' },
+    voice: { type: String, default: 'Magpie-Multilingual.ES-US.Diego.Calm' },
+    // WhatsApp: modo privacidad = CODEC 47 responde por ti
+    wa: {
+      privacy: { type: Boolean, default: false },
+      replyAll: { type: Boolean, default: false }, // true = responde a todos; false = solo a "allow"
+      allow: { type: [String], default: [] }, // nombres o números permitidos
+      instructions: { type: String, default: '' }, // ej. "di que estoy en una reunión hasta las 5"
+    },
   },
   { timestamps: true }
 );
+
+// Sesión de WhatsApp (credenciales cifradas por WhatsApp, guardadas como en disco pero en Mongo)
+const WaAuthSchema = new Schema({
+  userId: { type: Types.ObjectId, index: true, required: true },
+  key: { type: String, required: true },
+  value: { type: String, required: true },
+});
+WaAuthSchema.index({ userId: 1, key: 1 }, { unique: true });
+
+const WaMessageSchema = new Schema(
+  {
+    userId: { type: Types.ObjectId, index: true, required: true },
+    jid: String,
+    name: String,
+    fromMe: Boolean,
+    text: String,
+    autoReply: { type: Boolean, default: false },
+  },
+  { timestamps: true }
+);
+WaMessageSchema.index({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
+
+const WaContactSchema = new Schema({
+  userId: { type: Types.ObjectId, index: true, required: true },
+  jid: { type: String, required: true },
+  name: String,
+  phone: String,
+});
+WaContactSchema.index({ userId: 1, jid: 1 }, { unique: true });
 
 // type: android | chrome | pc | server
 const DeviceSchema = new Schema(
@@ -80,3 +117,6 @@ export const Message = model('Message', MessageSchema);
 export const Task = model('Task', TaskSchema);
 export const Audit = model('Audit', AuditSchema);
 export const Metric = model('Metric', MetricSchema);
+export const WaAuth = model('WaAuth', WaAuthSchema);
+export const WaMessage = model('WaMessage', WaMessageSchema);
+export const WaContact = model('WaContact', WaContactSchema);

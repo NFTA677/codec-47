@@ -2,16 +2,18 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 import { Audit, Device, Message, Metric, Task, User } from './models.js';
-import { hashKey, loginLimiter, newDeviceKey, requireUser, signUser } from './auth.js';
+import { deviceFromKey, hashKey, loginLimiter, newDeviceKey, requireUser, signUser } from './auth.js';
 import { audit, isOnline, sendCommand } from './hub.js';
 import { chat } from './ai.js';
 import { getWeather } from './weather.js';
+import { synthesize, VOICES } from './tts.js';
+import { waConnect, waLogout, waRecent, waStatus } from './whatsapp.js';
 
 export const apiRouter = express.Router();
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 const validId = (id) => mongoose.isValidObjectId(id);
 
-const publicUser = (u) => ({ id: u._id, email: u.email, name: u.name, city: u.city, tz: u.tz });
+const publicUser = (u) => ({ id: u._id, email: u.email, name: u.name, city: u.city, tz: u.tz, voice: u.voice, wa: u.wa });
 const publicDevice = (d) => ({
   id: d._id,
   name: d.name,
@@ -58,15 +60,48 @@ apiRouter.get('/auth/status', wrap(async (req, res) => {
   res.json({ hasUsers: (await User.countDocuments()) > 0, registerOpen: process.env.ALLOW_REGISTER === 'true' });
 }));
 
+// ---------- Voz (NVIDIA Magpie): la usan la web, la app y la extensión ----------
+// Autoriza con sesión web (Bearer) o con la clave de un dispositivo (X-Device-Key)
+async function userOrDevice(req, res, next) {
+  const key = req.headers['x-device-key'];
+  if (key) {
+    const d = await deviceFromKey(String(key));
+    if (d) {
+      req.user = await User.findById(d.userId);
+      if (req.user) return next();
+    }
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+  return requireUser(req, res, next);
+}
+const ttsLimit = new Map();
+apiRouter.post(
+  '/tts',
+  userOrDevice,
+  wrap(async (req, res) => {
+    const id = String(req.user._id);
+    const now = Date.now();
+    const hits = (ttsLimit.get(id) || []).filter((t) => now - t < 60_000);
+    if (hits.length > 40) return res.status(429).json({ error: 'Demasiadas peticiones de voz' });
+    hits.push(now);
+    ttsLimit.set(id, hits);
+    const audio = await synthesize(String(req.body?.text || ''), req.body?.voice || req.user.voice);
+    res.set({ 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store' }).send(audio);
+  })
+);
+
 apiRouter.use(requireUser);
+
+apiRouter.get('/voices', (req, res) => res.json({ voices: VOICES, current: req.user.voice }));
 
 apiRouter.get('/me', (req, res) => res.json(publicUser(req.user)));
 apiRouter.patch(
   '/me',
   wrap(async (req, res) => {
-    const { name, city, tz } = req.body || {};
+    const { name, city, tz, voice } = req.body || {};
     if (typeof name === 'string') req.user.name = name.slice(0, 80);
     if (typeof city === 'string') req.user.city = city.slice(0, 80);
+    if (typeof voice === 'string' && VOICES.some((v) => v.id === voice)) req.user.voice = voice;
     if (typeof tz === 'string' && tz.length < 60) {
       try {
         new Intl.DateTimeFormat('es', { timeZone: tz });
@@ -228,3 +263,23 @@ apiRouter.get(
   '/weather',
   wrap(async (req, res) => res.json(await getWeather(String(req.query.city || req.user.city || 'Ciudad de México'))))
 );
+
+// ---------- WhatsApp ----------
+apiRouter.get('/whatsapp', (req, res) => res.json({ ...waStatus(req.user._id), settings: req.user.wa }));
+apiRouter.post('/whatsapp/connect', wrap(async (req, res) => res.json(await waConnect(req.user._id))));
+apiRouter.post('/whatsapp/logout', wrap(async (req, res) => {
+  await waLogout(req.user._id);
+  res.json({ ok: true });
+}));
+apiRouter.get('/whatsapp/messages', wrap(async (req, res) => {
+  res.json(await waRecent(req.user._id, { limit: Math.min(50, Number(req.query.limit) || 30), onlyIncoming: false }));
+}));
+apiRouter.patch('/whatsapp/settings', wrap(async (req, res) => {
+  const { privacy, replyAll, allow, instructions } = req.body || {};
+  if (typeof privacy === 'boolean') req.user.wa.privacy = privacy;
+  if (typeof replyAll === 'boolean') req.user.wa.replyAll = replyAll;
+  if (Array.isArray(allow)) req.user.wa.allow = allow.map((a) => String(a).trim()).filter(Boolean).slice(0, 50);
+  if (typeof instructions === 'string') req.user.wa.instructions = instructions.slice(0, 500);
+  await req.user.save();
+  res.json(req.user.wa);
+}));
