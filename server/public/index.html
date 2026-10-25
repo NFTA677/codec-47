@@ -34,6 +34,7 @@
       <button class="nav" data-view="devices">📱 Dispositivos</button>
       <button class="nav" data-view="servers">🛡️ Servidores</button>
       <button class="nav" data-view="tasks">✅ Pendientes</button>
+      <button class="nav" data-view="downloads">⬇️ Descargas</button>
       <button class="nav" data-view="settings">⚙️ Ajustes</button>
       <div class="spacer"></div>
       <div class="muted small" id="ws-status">● desconectado</div>
@@ -90,6 +91,50 @@
           <button class="btn primary">Agregar</button>
         </form>
         <ul class="tasks" id="task-list"></ul>
+      </section>
+
+      <!-- Descargas -->
+      <section class="view hidden" id="view-downloads">
+        <header class="topbar"><h1>Descargas</h1></header>
+        <div class="grid">
+          <div class="card dl">
+            <div class="dl-icon">🤖</div>
+            <h3>App para Android</h3>
+            <p class="muted small">Burbuja flotante, voz, linterna, cámara, calendario, música y control del teléfono.</p>
+            <a class="btn primary" href="/downloads/CODEC47.apk" download>Descargar APK</a>
+            <ol class="steps small">
+              <li>Abre esta página <b>desde tu teléfono</b> y pulsa “Descargar APK”.</li>
+              <li>Abre el archivo descargado. Si Android pregunta, permite <i>“Instalar apps desconocidas”</i> para tu navegador.</li>
+              <li>Pulsa <b>Instalar</b>. Si Play Protect avisa, elige <i>“Instalar de todos modos”</i>; es normal en apps que no vienen de la Play Store.</li>
+              <li>En <b>Dispositivos → + Agregar</b> crea uno tipo <b>Android</b>, copia la clave y pégala en la app. La URL del servidor ya viene puesta.</li>
+              <li>Toca los botones ⚠ de la app para dar los permisos (burbuja, accesibilidad, notificaciones, micrófono…).</li>
+            </ol>
+          </div>
+          <div class="card dl">
+            <div class="dl-icon">🧩</div>
+            <h3>Extensión para Chrome</h3>
+            <p class="muted small">Música en YouTube o Spotify, control de pestañas y chat con voz desde el navegador.</p>
+            <a class="btn primary" href="/downloads/CODEC47-chrome.zip" download>Descargar extensión</a>
+            <ol class="steps small">
+              <li>Descomprime el ZIP (clic derecho → <i>Extraer todo</i>) en una carpeta que no vayas a borrar.</li>
+              <li>Abre <code>chrome://extensions</code> en una pestaña nueva.</li>
+              <li>Activa el <b>Modo de desarrollador</b> (arriba a la derecha).</li>
+              <li>Pulsa <b>Cargar descomprimida</b> y elige la carpeta <b>CODEC47-chrome</b>.</li>
+              <li>Fija el ícono 47 en la barra, crea un dispositivo tipo <b>Chrome</b> y pega la clave.</li>
+            </ol>
+          </div>
+          <div class="card dl">
+            <div class="dl-icon">🖥️</div>
+            <h3>Agente para PC y servidores</h3>
+            <p class="muted small">Rendimiento, auditoría de seguridad, alertas de desconexión y control (abrir programas, volumen, bloquear).</p>
+            <a class="btn primary" href="/download/agent.js" download>Descargar agente</a>
+            <ol class="steps small">
+              <li>Instala Node.js 22 o superior.</li>
+              <li>Crea un dispositivo tipo <b>PC</b> o <b>Servidor</b> y copia la clave.</li>
+              <li>Ejecuta: <code id="agent-cmd2"></code></li>
+            </ol>
+          </div>
+        </div>
       </section>
 
       <!-- Ajustes -->

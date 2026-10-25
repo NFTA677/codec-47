@@ -14,7 +14,21 @@ function add(text, user) {
   $('#log').scrollTop = $('#log').scrollHeight;
 }
 
-chrome.storage.local.get(['serverUrl', 'deviceKey']).then(({ serverUrl = '', deviceKey = '' }) => {
+// Voz de CODEC 47: la más natural disponible, frase por frase
+function speak(text) {
+  chrome.tts.stop();
+  const clean = text.replace(/[\p{Extended_Pictographic}*_#`]/gu, '').replace(/\s+/g, ' ').trim();
+  chrome.tts.getVoices((voices) => {
+    const es = voices.filter((v) => (v.lang || '').toLowerCase().startsWith('es'));
+    const score = (v) =>
+      (/natural|neural/i.test(v.voiceName) ? 100 : 0) + (/google/i.test(v.voiceName) ? 50 : 0) +
+      (v.remote ? 10 : 0) + (/es-(mx|us|419)/i.test(v.lang) ? 20 : 0);
+    const best = es.sort((a, b) => score(b) - score(a))[0];
+    chrome.tts.speak(clean, { voiceName: best?.voiceName, lang: best?.lang || 'es-MX', rate: 1.05 });
+  });
+}
+
+chrome.storage.local.get(['serverUrl', 'deviceKey']).then(({ serverUrl = 'https://codec-47.onrender.com', deviceKey = '' }) => {
   $('#server').value = serverUrl;
   $('#key').value = deviceKey;
 });
@@ -22,7 +36,10 @@ chrome.runtime.sendMessage({ type: 'get_status' }).then((r) => showStatus(r?.sta
 
 chrome.runtime.onMessage.addListener((m) => {
   if (m.type === 'status') showStatus(m.status);
-  if (m.type === 'chat_reply') add(m.text, false);
+  if (m.type === 'chat_reply') {
+    add(m.text, false);
+    speak(m.text);
+  }
 });
 
 $('#save').onclick = async () => {

@@ -5,7 +5,9 @@ import android.content.Context
 object Prefs {
     private fun sp(c: Context) = c.getSharedPreferences("codec47", Context.MODE_PRIVATE)
 
-    fun server(c: Context) = sp(c).getString("server", "") ?: ""
+    const val DEFAULT_SERVER = "https://codec-47.onrender.com"
+
+    fun server(c: Context) = sp(c).getString("server", DEFAULT_SERVER) ?: DEFAULT_SERVER
     fun key(c: Context) = sp(c).getString("key", "") ?: ""
     fun handsFree(c: Context) = sp(c).getBoolean("handsFree", false)
     fun autoStart(c: Context) = sp(c).getBoolean("autoStart", true)

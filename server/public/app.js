@@ -75,6 +75,7 @@ function showView(v) {
   if (v === 'servers') { loadDevices(); loadAudit(); }
   if (v === 'tasks') loadTasks();
   if (v === 'settings') fillSettings();
+  if (v === 'downloads') $('#agent-cmd2').textContent = `node agent.js --server ${location.origin} --key TU_CLAVE`;
 }
 
 // ---------------- Chat ----------------
@@ -118,14 +119,43 @@ $('#clear-chat').onclick = async () => {
 // Voz: hablar (TTS) y escuchar (reconocimiento de voz del navegador)
 $('#tts-toggle').checked = localStorageGet('c47_tts') !== '0';
 $('#tts-toggle').onchange = (e) => localStorageSet('c47_tts', e.target.checked ? '1' : '0');
+// Elige la voz en español más natural disponible en el navegador
+let bestVoice = null;
+function pickVoice() {
+  const voices = speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith('es'));
+  const score = (v) => {
+    const n = v.name.toLowerCase();
+    const l = v.lang.toLowerCase();
+    let s = 0;
+    if (n.includes('natural') || n.includes('neural')) s += 100; // Edge: voces neuronales
+    if (n.includes('online')) s += 40;
+    if (n.includes('google')) s += 50; // Chrome: voces de Google en la nube
+    if (/es-(mx|us|419|co|ar|pe|cl)/.test(l)) s += 20;
+    if (l === 'es-mx') s += 10;
+    if (!v.localService) s += 5;
+    return s;
+  };
+  bestVoice = voices.sort((a, b) => score(b) - score(a))[0] || null;
+}
+if ('speechSynthesis' in window) {
+  pickVoice();
+  speechSynthesis.onvoiceschanged = pickVoice;
+}
 function speak(text) {
   if (!$('#tts-toggle').checked || !('speechSynthesis' in window)) return;
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'es-MX';
-  const v = speechSynthesis.getVoices().find((v) => v.lang.startsWith('es'));
-  if (v) u.voice = v;
-  speechSynthesis.speak(u);
+  const clean = text.replace(/[\p{Extended_Pictographic}*_#`]/gu, '').replace(/\s+/g, ' ').trim();
+  // Frase por frase: suena más fluido y Chrome no corta los textos largos
+  const parts = clean.match(/[^.!?¡¿]+[.!?]*|[¡¿][^.!?]+[.!?]*/g) || [clean];
+  for (const p of parts) {
+    if (!p.trim()) continue;
+    const u = new SpeechSynthesisUtterance(p.trim());
+    u.lang = bestVoice?.lang || 'es-MX';
+    if (bestVoice) u.voice = bestVoice;
+    u.rate = 1.05;
+    u.pitch = 1;
+    speechSynthesis.speak(u);
+  }
 }
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null;

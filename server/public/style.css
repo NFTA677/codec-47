@@ -96,6 +96,10 @@ main { overflow: auto; padding: 20px 28px; }
 .form { display: grid; gap: 12px; max-width: 480px; margin-bottom: 16px; }
 .form label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
 .steps li { margin-bottom: 10px; }
+.dl { display: flex; flex-direction: column; gap: 10px; }
+.dl .btn { text-align: center; text-decoration: none; }
+.dl .steps { padding-left: 18px; margin: 4px 0 0; color: var(--muted); }
+.dl-icon { font-size: 34px; }
 
 .meter { margin: 8px 0; }
 .meter .lbl { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }

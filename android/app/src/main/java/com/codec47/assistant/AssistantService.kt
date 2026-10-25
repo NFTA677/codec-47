@@ -73,12 +73,14 @@ class AssistantService : Service(), Hub.Listener {
         instance = this
         executor = CommandExecutor(this)
         createChannel()
-        tts = TextToSpeech(this) { st ->
+        // Motor de Google si está instalado: sus voces neuronales suenan mucho más naturales
+        val googleTts = try { packageManager.getPackageInfo("com.google.android.tts", 0); "com.google.android.tts" } catch (e: Exception) { null }
+        tts = TextToSpeech(this, { st ->
             if (st == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.forLanguageTag("es-MX")
+                setupVoice()
                 ttsReady = true
             }
-        }
+        }, googleTts)
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
             override fun onDone(id: String?) = main.post { speaking = false; releaseFocus(); maybeResumeHandsFree() }.let {}
@@ -121,6 +123,24 @@ class AssistantService : Service(), Hub.Listener {
     }
 
     private fun has(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+
+    /** Elige la voz en español de mejor calidad (latina primero) y un ritmo natural. */
+    private fun setupVoice() {
+        val t = tts ?: return
+        t.language = Locale.forLanguageTag("es-MX")
+        val latam = setOf("MX", "US", "CO", "AR", "PE", "CL", "419")
+        val best = t.voices
+            ?.filter { it.locale.language == "es" && !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }
+            ?.sortedWith(
+                compareByDescending<android.speech.tts.Voice> { it.quality }
+                    .thenByDescending { it.locale.country in latam }
+                    .thenByDescending { it.locale.country == "MX" }
+            )
+            ?.firstOrNull()
+        if (best != null) t.voice = best
+        t.setSpeechRate(1.07f)
+        t.setPitch(1.0f)
+    }
 
     // ---------------- Notificación ----------------
     private fun createChannel() {
@@ -262,7 +282,9 @@ class AssistantService : Service(), Hub.Listener {
             speaking = true
             duck()
             val params = Bundle().apply { putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC) }
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "reply-${System.currentTimeMillis()}")
+            // Sin emojis ni símbolos (si no, los lee en voz alta: "cara sonriente")
+            val clean = text.replace(Regex("[\\p{So}\\p{Sk}*_#`]"), "").replace(Regex("\\s+"), " ").trim()
+            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, params, "reply-${System.currentTimeMillis()}")
         }
     }
 

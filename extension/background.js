@@ -5,7 +5,7 @@ let pinger = null;
 let status = 'desconectado';
 
 async function getConfig() {
-  const { serverUrl = '', deviceKey = '' } = await chrome.storage.local.get(['serverUrl', 'deviceKey']);
+  const { serverUrl = 'https://codec-47.onrender.com', deviceKey = '' } = await chrome.storage.local.get(['serverUrl', 'deviceKey']);
   return { serverUrl: serverUrl.replace(/\/+$/, ''), deviceKey };
 }
 
