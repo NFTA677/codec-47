@@ -285,7 +285,8 @@ apiRouter.post('/whatsapp/connect', wrap(async (req, res) => {
 apiRouter.get('/whatsapp/chats', wrap(async (req, res) => res.json(await waChats(req.user._id))));
 apiRouter.get('/whatsapp/chats/:jid', wrap(async (req, res) => res.json(await waChatMessages(req.user._id, req.params.jid))));
 apiRouter.patch('/whatsapp/chats/:jid', wrap(async (req, res) => {
-  await waSetChat(req.user._id, req.params.jid, req.body || {});
+  const jid = /^\d{8,15}$/.test(req.params.jid) ? req.params.jid + '@s.whatsapp.net' : req.params.jid;
+  await waSetChat(req.user._id, jid, req.body || {});
   res.json({ ok: true });
 }));
 apiRouter.post('/whatsapp/chats/:jid/continue', wrap(async (req, res) => {

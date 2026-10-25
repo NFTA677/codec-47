@@ -486,6 +486,14 @@ function fmtTime(d) {
   return t.toDateString() === new Date().toDateString() ? t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : t.toLocaleDateString();
 }
 
+const MOOD_LABEL = { '': 'Tono normal', romantico: 'Romántico', melancolico: 'Melancólico', carinoso: 'Cariñoso', formal: 'Formal', divertido: 'Divertido' };
+const moodSelect = (value = '', cls = 'mood-select') => {
+  const sel = el('select', { class: cls, 'aria-label': 'Tono de las respuestas' }, Object.entries(MOOD_LABEL).map(([v, l]) => el('option', { value: v }, l)));
+  sel.value = value;
+  return sel;
+};
+const chatUrl = (jid) => '/whatsapp/chats/' + encodeURIComponent(jid);
+
 function chatRow(c, open = false) {
   const auto = el('input', { type: 'checkbox' });
   auto.checked = c.auto;
@@ -495,8 +503,9 @@ function chatRow(c, open = false) {
   const row = el('div', { class: 'chat-row', 'data-jid': c.jid },
     el('div', {},
       el('div', { class: 'who' }, c.name || c.jid.split('@')[0]),
-      el('div', { class: 'prev' }, (c.lastFromMe ? 'Tú: ' : '') + (c.last || ''), ' · ', fmtTime(c.at))),
+      el('div', { class: 'prev' }, (c.lastFromMe ? 'Tú: ' : '') + (c.last || ''), c.at ? ' · ' + fmtTime(c.at) : '')),
     el('div', { class: 'ctrl' },
+      (() => { const m = moodSelect(c.mood); m.onchange = () => api(chatUrl(c.jid), { method: 'PATCH', body: { mood: m.value } }); return m; })(),
       el('label', { class: 'toggle', title: 'Responder automáticamente en este chat' }, el('span', { class: 'switch' }, auto, el('span')), 'Auto'),
       el('button', { class: 'btn small', title: 'Retoma la conversación y responde de forma natural', onclick: async (e) => {
         e.target.disabled = true; out.textContent = 'Escribiendo…';
@@ -519,6 +528,18 @@ async function openChat(c, detail) {
     el('div', { class: 'row' }, instr, el('button', { class: 'btn small', onclick: async () => { await api('/whatsapp/chats/' + encodeURIComponent(c.jid), { method: 'PATCH', body: { instructions: instr.value } }); c.instructions = instr.value; } }, 'Guardar')));
   bubbles.scrollTop = bubbles.scrollHeight;
 }
+
+$('#wa-add-mood').replaceWith(moodSelect('romantico', ''));
+document.querySelector('#wa-add select').id = 'wa-add-mood';
+$('#wa-add').onsubmit = async (e) => {
+  e.preventDefault();
+  const num = $('#wa-add-num').value.replace(/\D/g, '');
+  if (num.length < 8) return alert('Escribe el número con código de país, ej. 51944161283');
+  await api(chatUrl(num), { method: 'PATCH', body: { auto: true, mood: $('#wa-add-mood').value } });
+  $('#wa-add-num').value = '';
+  if (!$('#wa-privacy').checked) alert('Listo. Recuerda activar el Modo privacidad y pulsar Guardar para que responda.');
+  loadWaChats();
+};
 
 async function loadWaChats() {
   const chats = await api('/whatsapp/chats');

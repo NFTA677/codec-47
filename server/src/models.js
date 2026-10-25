@@ -52,6 +52,7 @@ const WaContactSchema = new Schema({
   phone: String,
   auto: { type: Boolean, default: false }, // responder automáticamente en este chat
   instructions: { type: String, default: '' }, // instrucciones solo para este chat
+  mood: { type: String, default: '' }, // tono: romantico | melancolico | carinoso | formal | divertido
   introAt: Date, // cuándo se envió el saludo de emergencia
   blocked: { type: Boolean, default: false },
 });

@@ -292,7 +292,7 @@ async function replyTo(userId, sock, user, jid, display, contact, mode) {
   }
 
   const convo = (await WaMessage.find({ userId, jid }).sort({ createdAt: -1 }).limit(14).lean()).reverse();
-  const reply = await quickReply(user, display, convo, { mode, chatInstructions: contact?.instructions || '', introduced: introDue || !!contact?.introAt });
+  const reply = await quickReply(user, display, convo, { mode, chatInstructions: contact?.instructions || '', mood: contact?.mood || '', introduced: introDue || !!contact?.introAt });
   if (!reply) return null;
   await sock.sendPresenceUpdate('composing', jid).catch(() => {});
   await new Promise((r) => setTimeout(r, 300 + Math.min(1200, reply.length * 8))); // "escribiendo…" breve
@@ -324,10 +324,15 @@ export async function waChats(userId) {
   ]);
   const contacts = await WaContact.find({ userId, jid: { $in: rows.map((r) => r._id) } }).lean();
   const byJid = new Map(contacts.map((c) => [c.jid, c]));
-  return rows.map((r) => {
+  const out = rows.map((r) => {
     const c = byJid.get(r._id) || {};
-    return { jid: r._id, name: c.name || r.name, last: r.last, at: r.at, lastFromMe: r.lastFromMe, count: r.count, auto: !!c.auto, instructions: c.instructions || '' };
+    return { jid: r._id, name: c.name || r.name, last: r.last, at: r.at, lastFromMe: r.lastFromMe, count: r.count, auto: !!c.auto, instructions: c.instructions || '', mood: c.mood || '' };
   });
+  // Chats configurados a mano (por número) que todavía no tienen mensajes
+  const seen = new Set(out.map((c) => c.jid));
+  const configured = await WaContact.find({ userId, $or: [{ auto: true }, { mood: { $nin: ['', null] } }, { instructions: { $nin: ['', null] } }] }).lean();
+  for (const c of configured) if (!seen.has(c.jid)) out.unshift({ jid: c.jid, name: c.name || '+' + c.jid.split('@')[0], last: 'Sin mensajes todavía', at: null, count: 0, auto: !!c.auto, instructions: c.instructions || '', mood: c.mood || '' });
+  return out;
 }
 
 export async function waChatMessages(userId, jid, limit = 40) {
@@ -335,9 +340,13 @@ export async function waChatMessages(userId, jid, limit = 40) {
   return rows.reverse().map((r) => ({ fromMe: r.fromMe, text: r.text, at: r.createdAt, auto: r.autoReply || undefined }));
 }
 
-export async function waSetChat(userId, jid, { auto, instructions }) {
+export const MOODS = ['', 'romantico', 'melancolico', 'carinoso', 'formal', 'divertido'];
+
+export async function waSetChat(userId, jid, { auto, instructions, mood, name }) {
   const $set = {};
   if (typeof auto === 'boolean') $set.auto = auto;
+  if (typeof mood === 'string' && MOODS.includes(mood)) $set.mood = mood;
+  if (typeof name === 'string' && name.trim()) $set.name = name.trim().slice(0, 60);
   if (typeof instructions === 'string') $set.instructions = instructions.slice(0, 500);
   await WaContact.updateOne({ userId, jid }, { $set }, { upsert: true });
 }

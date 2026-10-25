@@ -184,6 +184,10 @@ dialog h3 { margin: 0; }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
 .seg span { display: block; text-align: center; padding: 8px 10px; font-size: 13px; color: var(--muted); transition: background .15s, color .15s; }
 .seg input:checked + span { background: #fff; color: #0a0a0a; font-weight: 600; }
+.row.wrap { flex-wrap: wrap; margin-bottom: 12px; }
+#wa-add input { flex: 1 1 260px; }
+#wa-add select { flex: 0 0 180px; }
+.mood-select { width: auto; padding: 5px 8px; font-size: 12.5px; }
 .chat-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--panel); }
 .chat-row:first-child { border-top: 0; }
 .chat-row .who { font-weight: 600; }

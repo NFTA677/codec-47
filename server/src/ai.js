@@ -4,7 +4,7 @@ import { Device, Message, Task, User } from './models.js';
 import { audit, isOnline, sendCommand } from './hub.js';
 import { getWeather } from './weather.js';
 import { findYouTube, wikipedia } from './search.js';
-import { waRecent, waSendImage, waSendLocation, waSendText, waStatus } from './whatsapp.js';
+import { resolveJid, waRecent, waSendImage, waSendLocation, waSendText, waSetChat, waStatus } from './whatsapp.js';
 
 const BASE = () => process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1';
 // Modelo principal y de respaldo (si uno falla o lo retiran, se usa el siguiente)
@@ -92,6 +92,17 @@ const TOOLS = [
     'whatsapp_send_photo',
     'Envía por WhatsApp una foto: la última de la galería del teléfono o una nueva tomada ahora',
     { to: S('Contacto o número'), source: { type: 'string', enum: ['last', 'new'] }, caption: S('Texto opcional'), front: { type: 'boolean' } },
+    ['to']
+  ),
+  fn(
+    'whatsapp_chat_style',
+    'Configura un chat de WhatsApp: tono de las respuestas automáticas (romántico, melancólico, cariñoso, formal, divertido o normal), activar respuestas automáticas e instrucciones propias',
+    {
+      to: S('Contacto o número'),
+      mood: { type: 'string', enum: ['normal', 'romantico', 'melancolico', 'carinoso', 'formal', 'divertido'] },
+      auto: { type: 'boolean', description: 'Responder automáticamente en este chat' },
+      instructions: S('Instrucciones para este chat (opcional)'),
+    },
     ['to']
   ),
   fn('whatsapp_read', 'Lee los mensajes de WhatsApp recibidos recientemente', { from: S('Filtrar por contacto (opcional)'), limit: { type: 'number' } }),
@@ -283,6 +294,13 @@ async function runTool(name, args, ctx) {
       actions.push({ device: 'WhatsApp', action: 'foto', ok: true });
       return { ok: true, output: out };
     }
+    case 'whatsapp_chat_style': {
+      const { jid, name } = await resolveJid(user._id, args.to);
+      const mood = args.mood === 'normal' ? '' : args.mood;
+      await waSetChat(user._id, jid, { mood, auto: args.auto ?? (mood ? true : undefined), instructions: args.instructions });
+      if (mood && !user.wa.privacy) { user.wa.privacy = true; await user.save(); }
+      return { ok: true, chat: name, mood: args.mood, auto: args.auto ?? !!mood, privacy: user.wa.privacy };
+    }
     case 'whatsapp_read':
       return waRecent(user._id, { from: args.from, limit: args.limit || 10 });
     case 'whatsapp_privacy': {
@@ -382,7 +400,15 @@ export async function chat({ userId, text, fromDevice = null }) {
 }
 
 // Respuesta automática de WhatsApp en "modo privacidad" (y botón "Continuar")
-export async function quickReply(user, contactName, convo, { mode = 'auto', chatInstructions = '', introduced = false } = {}) {
+const MOOD_STYLE = {
+  romantico: 'TONO ROMÁNTICO: escribe con mucha ternura y dulzura, con un toque poético y frases bonitas que hagan sentir especial a la persona; transmite con emoción el cariño de ${OWNER} que aparece en sus instrucciones. Puedes usar un emoji tierno (❤️, 🌹, ✨). Mensajes de 2 a 3 frases.',
+  melancolico: 'TONO MELANCÓLICO: escribe con nostalgia y sensibilidad, frases pausadas y reflexivas, evocando los recuerdos y el tiempo compartido; transmite la añoranza de ${OWNER} que aparece en sus instrucciones. Sin dramatizar en exceso. Mensajes de 2 a 3 frases.',
+  carinoso: 'TONO CARIÑOSO: cálido, cercano y afectuoso, como alguien que quiere mucho a la persona.',
+  formal: 'TONO FORMAL: trato de usted, educado y profesional.',
+  divertido: 'TONO DIVERTIDO: alegre, con humor ligero y espontáneo.',
+};
+
+export async function quickReply(user, contactName, convo, { mode = 'auto', chatInstructions = '', mood = '', introduced = false } = {}) {
   const owner = user.name || 'tu usuario';
   const sys = `Eres CODEC, el asistente personal de ${owner}. Respondes sus mensajes de WhatsApp mientras él no puede.
 QUIÉN ERES:
@@ -399,6 +425,7 @@ CÓMO ESCRIBES:
 - Si es urgente, di que le avisarás a ${owner} de inmediato.
 ${user.wa?.instructions ? `- Instrucciones generales de ${owner}: ${user.wa.instructions}` : ''}
 ${chatInstructions ? `- Sobre este chat: ${chatInstructions}` : ''}
+${MOOD_STYLE[mood] ? `- ${MOOD_STYLE[mood].replaceAll('${OWNER}', owner)} Puedes transmitir en nombre de ${owner} los sentimientos que él escribió en sus instrucciones para este chat (por ejemplo, que la extraña), dejando claro que es su mensaje y no inventando otros.` : ''}
 Estás hablando con: ${contactName}.`;
 
   const msgs = [{ role: 'system', content: sys }, ...convo.map((m) => ({ role: m.fromMe ? 'assistant' : 'user', content: m.text }))];
