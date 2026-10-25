@@ -7,7 +7,7 @@ import { audit, isOnline, sendCommand } from './hub.js';
 import { chat } from './ai.js';
 import { getWeather } from './weather.js';
 import { synthesize, VOICES } from './tts.js';
-import { waConnect, waLogout, waRecent, waStatus } from './whatsapp.js';
+import { DEFAULT_INTRO, waChatMessages, waChats, waConnect, waContinueChat, waLogout, waSetChat, waStatus } from './whatsapp.js';
 
 export const apiRouter = express.Router();
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
@@ -276,17 +276,33 @@ apiRouter.get(
 );
 
 // ---------- WhatsApp ----------
-apiRouter.get('/whatsapp', (req, res) => res.json({ ...waStatus(req.user._id), settings: req.user.wa }));
-apiRouter.post('/whatsapp/connect', wrap(async (req, res) => res.json(await waConnect(req.user._id))));
+apiRouter.get('/whatsapp', (req, res) => res.json({ ...waStatus(req.user._id), settings: req.user.wa, defaultIntro: DEFAULT_INTRO(req.user.name) }));
+apiRouter.post('/whatsapp/connect', wrap(async (req, res) => {
+  const phone = req.body?.phone ? String(req.body.phone).replace(/D/g, '') : undefined;
+  if (phone !== undefined && phone.length < 8) return res.status(400).json({ error: 'Escribe tu número con código de país, ej. 51987654321' });
+  res.json(await waConnect(req.user._id, { phone }));
+}));
+apiRouter.get('/whatsapp/chats', wrap(async (req, res) => res.json(await waChats(req.user._id))));
+apiRouter.get('/whatsapp/chats/:jid', wrap(async (req, res) => res.json(await waChatMessages(req.user._id, req.params.jid))));
+apiRouter.patch('/whatsapp/chats/:jid', wrap(async (req, res) => {
+  await waSetChat(req.user._id, req.params.jid, req.body || {});
+  res.json({ ok: true });
+}));
+apiRouter.post('/whatsapp/chats/:jid/continue', wrap(async (req, res) => {
+  try {
+    res.json({ ok: true, text: await waContinueChat(req.user._id, req.params.jid) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+}));
 apiRouter.post('/whatsapp/logout', wrap(async (req, res) => {
   await waLogout(req.user._id);
   res.json({ ok: true });
 }));
-apiRouter.get('/whatsapp/messages', wrap(async (req, res) => {
-  res.json(await waRecent(req.user._id, { limit: Math.min(50, Number(req.query.limit) || 30), onlyIncoming: false }));
-}));
 apiRouter.patch('/whatsapp/settings', wrap(async (req, res) => {
-  const { privacy, replyAll, allow, instructions } = req.body || {};
+  const { privacy, replyAll, allow, instructions, intro, introEnabled } = req.body || {};
+  if (typeof introEnabled === 'boolean') req.user.wa.introEnabled = introEnabled;
+  if (typeof intro === 'string') req.user.wa.intro = intro.slice(0, 600);
   if (typeof privacy === 'boolean') req.user.wa.privacy = privacy;
   if (typeof replyAll === 'boolean') req.user.wa.replyAll = replyAll;
   if (Array.isArray(allow)) req.user.wa.allow = allow.map((a) => String(a).trim()).filter(Boolean).slice(0, 50);

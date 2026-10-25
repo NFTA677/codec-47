@@ -16,6 +16,8 @@ const UserSchema = new Schema(
       replyAll: { type: Boolean, default: false }, // true = responde a todos; false = solo a "allow"
       allow: { type: [String], default: [] }, // nombres o números permitidos
       instructions: { type: String, default: '' }, // ej. "di que estoy en una reunión hasta las 5"
+      introEnabled: { type: Boolean, default: true }, // saludo de emergencia al empezar
+      intro: { type: String, default: '' }, // texto del saludo (vacío = el predeterminado)
     },
   },
   { timestamps: true }
@@ -47,6 +49,10 @@ const WaContactSchema = new Schema({
   jid: { type: String, required: true },
   name: String,
   phone: String,
+  auto: { type: Boolean, default: false }, // responder automáticamente en este chat
+  instructions: { type: String, default: '' }, // instrucciones solo para este chat
+  introAt: Date, // cuándo se envió el saludo de emergencia
+  blocked: { type: Boolean, default: false },
 });
 WaContactSchema.index({ userId: 1, jid: 1 }, { unique: true });
 

@@ -17,6 +17,10 @@ for (const v of ['MONGODB_URI', 'JWT_SECRET', 'NVIDIA_API_KEY']) {
   if (!process.env[v]) console.warn(`[config] Falta la variable ${v}`);
 }
 
+// Un error no capturado no debe tumbar el servidor (ni cortar una vinculación de WhatsApp)
+process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e));
+process.on('uncaughtException', (e) => console.error('[uncaughtException]', e));
+
 const app = express();
 app.set('trust proxy', 1);
 app.use(

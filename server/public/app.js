@@ -422,58 +422,135 @@ $('#voice-test').onclick = () =>
   speak(`Hola${state.user?.name ? ' ' + state.user.name : ''}. Soy CODEC 47. Todos los sistemas están en línea. ¿En qué puedo ayudarte?`, false, $('#me-voice').value);
 
 // ---------------- WhatsApp ----------------
+const WA_LABEL = { conectado: 'Vinculado', qr: 'Escanea el QR', codigo: 'Ingresa el código', conectando: 'Conectando…', reconectando: 'Reconectando…', desconectado: 'Sin vincular' };
+let waShowPhone = false;
+
+function phoneForm() {
+  const input = el('input', { placeholder: 'Tu número con código de país, ej. 51987654321', inputmode: 'tel' });
+  const err = el('p', { class: 'error' });
+  return el('div', { class: 'form' },
+    input, err,
+    el('div', { class: 'row' },
+      el('button', { type: 'button', class: 'btn primary', onclick: async () => {
+        err.textContent = '';
+        try { renderWaStatus(await api('/whatsapp/connect', { method: 'POST', body: { phone: input.value } })); }
+        catch (e) { err.textContent = e.message; }
+      } }, 'Obtener código'),
+      el('button', { type: 'button', class: 'btn ghost', onclick: () => { waShowPhone = false; loadWhatsApp(); } }, 'Usar QR')));
+}
+
 function renderWaStatus(st) {
-  const labels = { conectado: '● vinculado', qr: 'escanea el QR', conectando: 'conectando…', reconectando: 'reconectando…', desconectado: 'sin vincular' };
-  $('#wa-status').textContent = labels[st.status] || st.status;
+  $('#wa-status').textContent = WA_LABEL[st.status] || st.status;
   const b = $('#wa-link-body');
   b.innerHTML = '';
+  if (st.lastError && st.status !== 'conectado') b.append(el('p', { class: 'error' }, st.lastError));
+
   if (st.status === 'conectado') {
     b.append(
-      el('p', {}, 'WhatsApp vinculado ', el('span', { class: 'wa-me' }, st.me ? `(${st.me.name || ''} +${st.me.id})` : '')),
-      el('p', { class: 'muted small' }, 'Ya puedes decirle a CODEC 47: “envía un WhatsApp a Carlos diciendo que llego en 10”, “mándale mi ubicación a mamá”, “envíale la última foto a Ana”, “léeme mis WhatsApp”.'),
-      el('button', { class: 'btn ghost danger', onclick: async () => { if (confirm('¿Desvincular WhatsApp?')) { await api('/whatsapp/logout', { method: 'POST' }); loadWhatsApp(); } } }, 'Desvincular')
+      el('p', {}, 'Vinculado ', el('span', { class: 'wa-me' }, st.me ? `${st.me.name || ''} · +${st.me.id}` : '')),
+      el('p', { class: 'muted small' }, 'Puedes decirle: “envía un WhatsApp a Carlos diciendo que llego en 10”, “mándale mi ubicación a mamá”, “envíale la última foto a Ana”, “léeme mis WhatsApp”.'),
+      el('div', { class: 'actions' }, el('button', { class: 'btn ghost danger', onclick: async () => { if (confirm('¿Desvincular WhatsApp?')) { await api('/whatsapp/logout', { method: 'POST' }); loadWhatsApp(); } } }, 'Desvincular'))
     );
-  } else if (st.status === 'qr' && st.qr) {
+  } else if (st.status === 'codigo' && st.code) {
+    b.append(
+      el('ol', { class: 'steps small' },
+        el('li', {}, 'En WhatsApp: Dispositivos vinculados → Vincular un dispositivo.'),
+        el('li', {}, 'Toca “Vincular con el número de teléfono” (abajo).'),
+        el('li', {}, 'Escribe este código:')),
+      el('div', { class: 'code' }, st.code),
+      el('p', { class: 'muted small' }, 'El código vence en unos minutos.'));
+  } else if (st.status === 'qr' && st.qr && !waShowPhone) {
     b.append(
       el('ol', { class: 'steps small' },
         el('li', {}, 'Abre WhatsApp en tu teléfono.'),
-        el('li', {}, 'Toca ⋮ (o Configuración) → Dispositivos vinculados → Vincular un dispositivo.'),
+        el('li', {}, 'Configuración → Dispositivos vinculados → Vincular un dispositivo.'),
         el('li', {}, 'Escanea este código:')),
-      el('img', { class: 'qr', src: st.qr, alt: 'Código QR de WhatsApp' })
-    );
+      el('img', { class: 'qr', src: st.qr, alt: 'Código QR de WhatsApp' }),
+      el('button', { class: 'link small', onclick: () => { waShowPhone = true; renderWaStatus(st); } }, '¿No funciona el QR? Vincular con un código'));
+  } else if (waShowPhone) {
+    b.append(el('p', { class: 'muted small' }, 'Recibirás un código de 8 letras para escribir en WhatsApp → Dispositivos vinculados → Vincular con el número de teléfono.'), phoneForm());
   } else if (st.status === 'conectando' || st.status === 'reconectando') {
-    b.append(el('p', { class: 'muted' }, 'Generando el código…'));
+    b.append(el('p', { class: 'muted' }, 'Preparando la vinculación…'));
   } else {
     b.append(
-      el('p', { class: 'muted small' }, 'CODEC 47 se conecta como un “dispositivo vinculado”, igual que WhatsApp Web. Tu teléfono sigue funcionando normal.'),
-      el('p', { class: 'muted small' }, 'Aviso: es una conexión no oficial: WhatsApp podría limitar cuentas que envían mensajes automáticos en exceso. Úsalo con moderación.'),
-      el('button', { class: 'btn primary', onclick: async () => renderWaStatus(await api('/whatsapp/connect', { method: 'POST' })) }, 'Vincular WhatsApp')
-    );
+      el('p', { class: 'muted small' }, 'CODEC se conecta como un dispositivo vinculado, igual que WhatsApp Web. Tu teléfono sigue funcionando normal.'),
+      el('p', { class: 'muted small' }, 'Aviso: es una conexión no oficial. WhatsApp podría limitar cuentas que envían demasiados mensajes automáticos.'),
+      el('div', { class: 'actions' },
+        el('button', { class: 'btn primary', onclick: async () => { waShowPhone = false; renderWaStatus(await api('/whatsapp/connect', { method: 'POST' })); } }, 'Vincular con QR'),
+        el('button', { class: 'btn', onclick: () => { waShowPhone = true; renderWaStatus(st); } }, 'Vincular con código')));
   }
 }
-const waRow = (m) => el('div', { class: 'ev' },
-  el('span', { class: 'muted' }, new Date(m.at || Date.now()).toLocaleString()),
-  el('span', { class: m.from === 'yo' ? 'sev-info' : 'sev-warn' }, m.from === 'yo' ? (m.auto ? 'CODEC 47 (auto)' : 'Tú') : m.from),
-  el('span', {}, m.text));
+
+function fmtTime(d) {
+  const t = new Date(d);
+  return t.toDateString() === new Date().toDateString() ? t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : t.toLocaleDateString();
+}
+
+function chatRow(c, open = false) {
+  const auto = el('input', { type: 'checkbox' });
+  auto.checked = c.auto;
+  auto.onchange = () => api('/whatsapp/chats/' + encodeURIComponent(c.jid), { method: 'PATCH', body: { auto: auto.checked } });
+  const out = el('div', { class: 'out' });
+  const detail = el('div', { class: 'chat-detail' + (open ? '' : ' hidden') });
+  const row = el('div', { class: 'chat-row', 'data-jid': c.jid },
+    el('div', {},
+      el('div', { class: 'who' }, c.name || c.jid.split('@')[0]),
+      el('div', { class: 'prev' }, (c.lastFromMe ? 'Tú: ' : '') + (c.last || ''), ' · ', fmtTime(c.at))),
+    el('div', { class: 'ctrl' },
+      el('label', { class: 'toggle', title: 'Responder automáticamente en este chat' }, el('span', { class: 'switch' }, auto, el('span')), 'Auto'),
+      el('button', { class: 'btn small', title: 'Retoma la conversación y responde de forma natural', onclick: async (e) => {
+        e.target.disabled = true; out.textContent = 'Escribiendo…';
+        try { const r = await api('/whatsapp/chats/' + encodeURIComponent(c.jid) + '/continue', { method: 'POST' }); out.textContent = 'Enviado: ' + r.text; if (!detail.classList.contains('hidden')) openChat(c, detail); }
+        catch (err) { out.textContent = 'Error: ' + err.message; }
+        e.target.disabled = false;
+      } }, 'Continuar'),
+      el('button', { class: 'btn small ghost', onclick: () => { detail.classList.toggle('hidden'); if (!detail.classList.contains('hidden')) openChat(c, detail); } }, 'Ver')),
+    out, detail);
+  out.style.gridColumn = '1 / -1';
+  return row;
+}
+
+async function openChat(c, detail) {
+  const msgs = await api('/whatsapp/chats/' + encodeURIComponent(c.jid));
+  const instr = el('input', { placeholder: 'Instrucciones solo para este chat (ej.: es mi jefe, sé formal)', value: c.instructions || '' });
+  detail.innerHTML = '';
+  const bubbles = el('div', { class: 'bubbles' }, msgs.map((m) => el('div', { class: 'b' + (m.fromMe ? ' me' : '') }, m.text, el('small', {}, (m.auto ? 'CODEC · ' : '') + fmtTime(m.at)))));
+  detail.append(bubbles,
+    el('div', { class: 'row' }, instr, el('button', { class: 'btn small', onclick: async () => { await api('/whatsapp/chats/' + encodeURIComponent(c.jid), { method: 'PATCH', body: { instructions: instr.value } }); c.instructions = instr.value; } }, 'Guardar')));
+  bubbles.scrollTop = bubbles.scrollHeight;
+}
+
+async function loadWaChats() {
+  const chats = await api('/whatsapp/chats');
+  const list = $('#wa-chats');
+  list.innerHTML = '';
+  if (!chats.length) list.append(el('div', { class: 'empty' }, 'Aún no hay chats. Cuando te escriban por WhatsApp aparecerán aquí.'));
+  for (const c of chats) list.append(chatRow(c));
+}
+
 async function loadWhatsApp() {
   const st = await api('/whatsapp');
   renderWaStatus(st);
   const w = st.settings || {};
   $('#wa-privacy').checked = !!w.privacy;
-  $('#wa-all').checked = !!w.replyAll;
+  document.querySelector(`input[name=wa-scope][value=${w.replyAll ? 'all' : 'some'}]`).checked = true;
   $('#wa-allow').value = (w.allow || []).join('\n');
+  $('#wa-intro-on').checked = w.introEnabled !== false;
+  $('#wa-intro').value = w.intro || '';
+  $('#wa-intro').placeholder = st.defaultIntro || '';
   $('#wa-instr').value = w.instructions || '';
-  const msgs = await api('/whatsapp/messages?limit=40');
-  $('#wa-messages').innerHTML = '';
-  if (!msgs.length) $('#wa-messages').append(el('div', { class: 'empty' }, 'Sin mensajes todavía.'));
-  for (const m of msgs) $('#wa-messages').append(waRow(m));
+  loadWaChats().catch(() => {});
 }
 $('#wa-form').onsubmit = async (e) => {
   e.preventDefault();
   await api('/whatsapp/settings', { method: 'PATCH', body: {
-    privacy: $('#wa-privacy').checked, replyAll: $('#wa-all').checked,
-    allow: $('#wa-allow').value.split('\n'), instructions: $('#wa-instr').value } });
-  alert('Guardado');
+    privacy: $('#wa-privacy').checked,
+    replyAll: document.querySelector('input[name=wa-scope]:checked')?.value === 'all',
+    allow: $('#wa-allow').value.split('\n'),
+    introEnabled: $('#wa-intro-on').checked,
+    intro: $('#wa-intro').value,
+    instructions: $('#wa-instr').value } });
+  const btn = e.submitter; if (btn) { btn.textContent = 'Guardado'; setTimeout(() => (btn.textContent = 'Guardar'), 1500); }
 };
 
 function fillSettings() {
@@ -515,8 +592,7 @@ function connectWS() {
         new Notification('CODEC 47 · ' + (m.event.deviceName || ''), { body: m.event.detail });
     }
     if (m.type === 'wa' && !$('#view-whatsapp').classList.contains('hidden')) renderWaStatus(m);
-    if (m.type === 'wa_msg' && !$('#view-whatsapp').classList.contains('hidden'))
-      $('#wa-messages').prepend(waRow({ from: m.fromMe ? 'yo' : m.name, text: m.text, auto: m.autoReply }));
+    if (m.type === 'wa_msg' && !$('#view-whatsapp').classList.contains('hidden')) { clearTimeout(state.waT); state.waT = setTimeout(() => loadWaChats().catch(() => {}), 600); }
     if (m.type === 'chat') {
       // Conversación hecha desde otro dispositivo (ej. el teléfono): se continúa aquí
       addMsg('user', m.user, 'desde ' + m.source);
