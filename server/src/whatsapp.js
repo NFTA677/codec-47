@@ -15,6 +15,8 @@ const logger = pino({ level: 'silent' });
 
 const sessions = new Map(); // userId -> { sock, status, qr, code, me, lastError }
 const lastAuto = new Map(); // jid -> [timestamps]
+const pendingReply = new Map(); // jid -> temporizador de respuesta
+const REPLY_DELAY = 6000; // ms que espera a que la persona termine de escribir
 const URGENT = /(urgente|urgencia|emergencia|hospital|accidente|auxilio|socorro|ayuda|polic[ií]a|ambulancia|grave)/i;
 
 export const DEFAULT_INTRO = (name) =>
@@ -250,14 +252,29 @@ async function handleIncoming(userId, sock, m, type = 'notify') {
   const allowed = user.wa.replyAll || contact?.auto || matchesAllow(user.wa.allow, display, jid, altPhone);
   if (!allowed || contact?.blocked) return;
 
-  // Anti-bucle: máximo 1 respuesta cada 20 s y 15 por hora por contacto
-  const now = Date.now();
-  const hist = (lastAuto.get(jid) || []).filter((t) => now - t < 3600_000);
-  if (hist.length >= 15 || (hist.length && now - hist[hist.length - 1] < 20_000)) return;
-  hist.push(now);
-  lastAuto.set(jid, hist);
-
-  await replyTo(userId, sock, user, jid, display, contact, 'auto');
+  // Conversación continua: espera unos segundos a que la persona termine de escribir
+  // (si manda varios mensajes seguidos) y responde a todos juntos, sin saltarse ninguno.
+  clearTimeout(pendingReply.get(jid));
+  pendingReply.set(
+    jid,
+    setTimeout(async () => {
+      pendingReply.delete(jid);
+      // Límite de seguridad: máximo 40 respuestas por hora por contacto
+      const now = Date.now();
+      const hist = (lastAuto.get(jid) || []).filter((t) => now - t < 3600_000);
+      if (hist.length >= 40) return log(userId, `Límite de respuestas por hora alcanzado con ${display}`, 'warn');
+      hist.push(now);
+      lastAuto.set(jid, hist);
+      try {
+        const freshUser = await User.findById(userId);
+        if (!freshUser?.wa?.privacy) return;
+        const freshContact = await WaContact.findOne({ userId, jid }).lean();
+        await replyTo(userId, sock, freshUser, jid, display, freshContact, 'auto');
+      } catch (e) {
+        log(userId, 'No pude responder a ' + display + ': ' + e.message, 'warn');
+      }
+    }, REPLY_DELAY)
+  );
 }
 
 /** Genera y envía una respuesta humanizada en un chat (automática o con el botón "Continuar"). */
