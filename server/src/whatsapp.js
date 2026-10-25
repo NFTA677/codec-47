@@ -166,7 +166,8 @@ export async function waConnect(userId, { phone } = {}) {
       } else {
         // 515 = "reinicio necesario" justo después de escanear: es normal, se reconecta solo
         setStatus(userId, { sock: null, status: 'reconectando', lastError: code === DisconnectReason.restartRequired ? null : reason });
-        setTimeout(() => waConnect(userId).catch((e) => log(userId, 'Reconexión falló: ' + e.message, 'warn')), code === DisconnectReason.restartRequired ? 1500 : 5000);
+        const wait = code === DisconnectReason.restartRequired ? 1500 : code === DisconnectReason.connectionReplaced ? 30_000 : 5000;
+        setTimeout(() => waConnect(userId).catch((e) => log(userId, 'Reconexión falló: ' + e.message, 'warn')), wait);
       }
     }
   });
@@ -202,7 +203,7 @@ function matchesAllow(allow, display, jid, altPhone) {
 }
 
 async function handleIncoming(userId, sock, m, type = 'notify') {
-  const jid = m.key.remoteJid;
+  let jid = m.key.remoteJid;
   if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@newsletter')) return;
   const fromMe = !!m.key.fromMe;
 
@@ -224,11 +225,15 @@ async function handleIncoming(userId, sock, m, type = 'notify') {
     try { altPhone = (await sock.signalRepository?.lidMapping?.getPNForLID(jid))?.split('@')[0]?.split(':')[0] || null; } catch {}
   }
   if (!altPhone && jid.endsWith('@s.whatsapp.net')) altPhone = jid.split('@')[0];
+  // Un mismo contacto puede llegar como LID o como número: usar siempre el número como chat
+  if (altPhone && isLidUser?.(jid)) jid = altPhone + '@s.whatsapp.net';
+  // Evitar duplicados (reintentos o dos servidores durante un despliegue)
+  if (m.key.id && (await WaMessage.exists({ userId, msgId: m.key.id }))) return;
   if (name) await saveContact(userId, jid, name, altPhone || (jid.endsWith('@s.whatsapp.net') ? jid.split('@')[0] : null));
   const contact = await WaContact.findOne({ userId, jid }).lean();
   const display = name || contact?.name || jid.split('@')[0];
 
-  await WaMessage.create({ userId, jid, name: display, fromMe, text });
+  await WaMessage.create({ userId, jid, name: display, fromMe, text, msgId: m.key.id });
   notifyUser(userId, { type: 'wa_msg', jid, name: display, text, fromMe });
   if (fromMe || type !== 'notify') return;
 

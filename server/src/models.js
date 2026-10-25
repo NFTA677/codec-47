@@ -39,6 +39,7 @@ const WaMessageSchema = new Schema(
     fromMe: Boolean,
     text: String,
     autoReply: { type: Boolean, default: false },
+    msgId: { type: String, index: true },
   },
   { timestamps: true }
 );
