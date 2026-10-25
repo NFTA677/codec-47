@@ -90,6 +90,17 @@ apiRouter.post(
   })
 );
 
+// Diagnóstico público de la voz (no expone nada; la frase queda en caché)
+apiRouter.get('/tts/health', wrap(async (req, res) => {
+  const t = Date.now();
+  try {
+    const b = await synthesize('Sistemas en línea.');
+    res.json({ ok: true, bytes: b.length, ms: Date.now() - t });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message).slice(0, 200) });
+  }
+}));
+
 apiRouter.use(requireUser);
 
 apiRouter.get('/voices', (req, res) => res.json({ voices: VOICES, current: req.user.voice }));

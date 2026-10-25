@@ -3,17 +3,20 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#0b0f17" />
+  <meta name="theme-color" content="#0a0a0a" />
   <title>CODEC 47</title>
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <!-- Login -->
   <section id="auth" class="auth hidden">
     <div class="auth-card">
-      <div class="logo"><span class="orb"></span> CODEC 47</div>
+      <div class="logo"><span class="mark">47</span> CODEC 47</div>
       <p class="muted" id="auth-sub">Inicia sesión para hablar con tu asistente.</p>
       <form id="auth-form">
         <input id="auth-name" placeholder="Tu nombre" class="hidden" autocomplete="name" />
@@ -29,59 +32,72 @@
   <!-- App -->
   <div id="app" class="app hidden">
     <nav class="sidebar">
-      <div class="logo"><span class="orb" id="orb"></span> CODEC 47</div>
-      <button class="nav active" data-view="chat">💬 Chat</button>
-      <button class="nav" data-view="devices">📱 Dispositivos</button>
-      <button class="nav" data-view="servers">🛡️ Servidores</button>
-      <button class="nav" data-view="whatsapp">🟢 WhatsApp</button>
-      <button class="nav" data-view="tasks">✅ Pendientes</button>
-      <button class="nav" data-view="downloads">⬇️ Descargas</button>
-      <button class="nav" data-view="settings">⚙️ Ajustes</button>
+      <div class="logo"><span class="mark" id="orb">47</span> CODEC 47</div>
+      <button class="nav active" data-view="chat"><i data-icon="chat"></i>Chat</button>
+      <button class="nav" data-view="devices"><i data-icon="devices"></i>Dispositivos</button>
+      <button class="nav" data-view="servers"><i data-icon="server"></i>Servidores</button>
+      <button class="nav" data-view="whatsapp"><i data-icon="whatsapp"></i>WhatsApp</button>
+      <button class="nav" data-view="tasks"><i data-icon="tasks"></i>Pendientes</button>
+      <button class="nav" data-view="downloads"><i data-icon="download"></i>Descargas</button>
+      <button class="nav" data-view="settings"><i data-icon="settings"></i>Ajustes</button>
       <div class="spacer"></div>
-      <div class="muted small" id="ws-status">● desconectado</div>
+      <div class="status-line"><span class="dot" id="ws-dot"></span><span id="ws-status">desconectado</span></div>
     </nav>
 
     <main>
       <!-- Chat -->
       <section class="view" id="view-chat">
         <header class="topbar">
-          <h1>Chat</h1>
+          <div>
+            <h1>Chat</h1>
+            <div class="subtitle">Pregunta lo que quieras o da una orden a tus dispositivos.</div>
+          </div>
           <div class="row">
-            <label class="toggle" title="Al terminar de responder vuelve a escucharte"><input type="checkbox" id="conv-toggle" checked /> Conversación continua</label>
-            <label class="toggle"><input type="checkbox" id="tts-toggle" checked /> Voz</label>
+            <label class="toggle" title="Al terminar de responder vuelve a escucharte">
+              <span class="switch"><input type="checkbox" id="conv-toggle" checked /><span></span></span> Conversación continua
+            </label>
+            <label class="toggle"><span class="switch"><input type="checkbox" id="tts-toggle" checked /><span></span></span> Voz</label>
             <button class="btn ghost small" id="clear-chat">Borrar historial</button>
           </div>
         </header>
         <div class="messages" id="messages"></div>
         <form class="composer" id="chat-form">
-          <button type="button" class="mic" id="mic" title="Hablar">🎙️</button>
-          <input id="chat-input" placeholder="Pregúntame lo que quieras o dime qué hacer…" autocomplete="off" />
-          <button class="btn primary" type="submit">Enviar</button>
+          <button type="button" class="icon-btn" id="mic" title="Hablar" aria-label="Hablar"><i data-icon="mic"></i></button>
+          <input id="chat-input" placeholder="Escribe un mensaje…" autocomplete="off" />
+          <button class="icon-btn send" type="submit" title="Enviar" aria-label="Enviar"><i data-icon="send"></i></button>
         </form>
       </section>
 
       <!-- Dispositivos -->
       <section class="view hidden" id="view-devices">
         <header class="topbar">
-          <h1>Dispositivos</h1>
-          <button class="btn primary" id="add-device">+ Agregar</button>
+          <div>
+            <h1>Dispositivos</h1>
+            <div class="subtitle">Teléfonos, navegadores, computadoras y servidores conectados.</div>
+          </div>
+          <button class="btn primary" id="add-device"><i data-icon="plus"></i>Agregar</button>
         </header>
         <div class="grid" id="device-list"></div>
       </section>
 
       <!-- Servidores -->
       <section class="view hidden" id="view-servers">
-        <header class="topbar"><h1>Servidores y PCs</h1></header>
+        <header class="topbar">
+          <div>
+            <h1>Servidores y PCs</h1>
+            <div class="subtitle">Rendimiento en tiempo real y auditoría de seguridad.</div>
+          </div>
+        </header>
         <div class="grid" id="server-list"></div>
         <h2>Auditoría</h2>
         <div class="row filters">
           <select id="audit-filter">
-            <option value="">Todo</option>
+            <option value="">Todos los eventos</option>
             <option value="high">Solo críticos</option>
             <option value="warn">Advertencias</option>
           </select>
         </div>
-        <div class="audit" id="audit-list"></div>
+        <div class="list" id="audit-list"></div>
       </section>
 
       <!-- Pendientes -->
@@ -98,20 +114,23 @@
       <!-- WhatsApp -->
       <section class="view hidden" id="view-whatsapp">
         <header class="topbar">
-          <h1>WhatsApp</h1>
+          <div>
+            <h1>WhatsApp</h1>
+            <div class="subtitle">Mensajes, ubicación, fotos y respuestas automáticas.</div>
+          </div>
           <span class="badge" id="wa-status">…</span>
         </header>
         <div class="grid">
           <div class="card" id="wa-link-card">
-            <h3>Vincular</h3>
+            <h3>Vinculación</h3>
             <div id="wa-link-body"></div>
           </div>
           <div class="card">
-            <h3>🛡️ Modo privacidad</h3>
-            <p class="muted small">Cuando está activo, CODEC 47 responde tus mensajes por ti. También puedes decirle por voz: <i>“activa el modo privacidad y responde solo a mamá y a Carlos”</i>.</p>
+            <h3>Modo privacidad</h3>
+            <p class="muted small">Cuando está activo, CODEC 47 responde tus mensajes por ti. También puedes decirlo por voz: “activa el modo privacidad y responde solo a mamá y a Carlos”.</p>
             <form class="form" id="wa-form">
-              <label class="toggle"><input type="checkbox" id="wa-privacy" /> Activar modo privacidad</label>
-              <label class="toggle"><input type="checkbox" id="wa-all" /> Responder a todos (si no, solo a la lista)</label>
+              <label class="toggle"><span class="switch"><input type="checkbox" id="wa-privacy" /><span></span></span> Modo privacidad activo</label>
+              <label class="toggle"><span class="switch"><input type="checkbox" id="wa-all" /><span></span></span> Responder a todos (si no, solo a la lista)</label>
               <label>Responder solo a (nombres o números, uno por línea)
                 <textarea id="wa-allow" rows="4" placeholder="Mamá&#10;Carlos&#10;51987654321"></textarea>
               </label>
@@ -123,48 +142,53 @@
           </div>
         </div>
         <h2>Mensajes recientes</h2>
-        <div class="audit" id="wa-messages"></div>
+        <div class="list" id="wa-messages"></div>
       </section>
 
       <!-- Descargas -->
       <section class="view hidden" id="view-downloads">
-        <header class="topbar"><h1>Descargas</h1></header>
+        <header class="topbar">
+          <div>
+            <h1>Descargas</h1>
+            <div class="subtitle">Instala CODEC 47 en tus dispositivos.</div>
+          </div>
+        </header>
         <div class="grid">
           <div class="card dl">
-            <div class="dl-icon">🤖</div>
+            <div class="card-icon"><i data-icon="devices"></i></div>
             <h3>App para Android</h3>
-            <p class="muted small">Burbuja flotante, voz, linterna, cámara, calendario, música y control del teléfono.</p>
-            <a class="btn primary" href="/downloads/CODEC47.apk" download>Descargar APK <span id="apk-version"></span></a>
-            <p class="muted small">Si ya la tienes instalada, la app te avisará sola cuando haya una versión nueva.</p>
+            <p class="muted small">Activación por voz con “Codec”, también con la pantalla apagada. Linterna, cámara, calendario, música, WhatsApp y control del teléfono.</p>
+            <a class="btn primary" href="/downloads/CODEC47.apk" download><i data-icon="download"></i>Descargar APK <span id="apk-version"></span></a>
+            <p class="muted small">Si ya la tienes instalada, la app te avisará cuando haya una versión nueva.</p>
             <ol class="steps small">
-              <li>Abre esta página <b>desde tu teléfono</b> y pulsa “Descargar APK”.</li>
-              <li>Abre el archivo descargado. Si Android pregunta, permite <i>“Instalar apps desconocidas”</i> para tu navegador.</li>
-              <li>Pulsa <b>Instalar</b>. Si Play Protect avisa, elige <i>“Instalar de todos modos”</i>; es normal en apps que no vienen de la Play Store.</li>
-              <li>En <b>Dispositivos → + Agregar</b> crea uno tipo <b>Android</b>, copia la clave y pégala en la app. La URL del servidor ya viene puesta.</li>
-              <li>Toca los botones ⚠ de la app para dar los permisos (burbuja, accesibilidad, notificaciones, micrófono…).</li>
+              <li>Abre esta página desde tu teléfono y pulsa “Descargar APK”.</li>
+              <li>Abre el archivo. Si Android lo pide, permite “Instalar apps desconocidas”.</li>
+              <li>Pulsa Instalar. Si Play Protect avisa, elige “Instalar de todos modos”.</li>
+              <li>En Dispositivos → Agregar, crea uno tipo Android y pega la clave en la app.</li>
+              <li>Concede los permisos que la app te indica.</li>
             </ol>
           </div>
           <div class="card dl">
-            <div class="dl-icon">🧩</div>
+            <div class="card-icon"><i data-icon="globe"></i></div>
             <h3>Extensión para Chrome</h3>
-            <p class="muted small">Música en YouTube o Spotify, control de pestañas y chat con voz desde el navegador.</p>
-            <a class="btn primary" href="/downloads/CODEC47-chrome.zip" download>Descargar extensión</a>
+            <p class="muted small">Música en YouTube o Spotify, control de pestañas y chat con la misma voz.</p>
+            <a class="btn primary" href="/downloads/CODEC47-chrome.zip" download><i data-icon="download"></i>Descargar extensión</a>
             <ol class="steps small">
-              <li>Descomprime el ZIP (clic derecho → <i>Extraer todo</i>) en una carpeta que no vayas a borrar.</li>
-              <li>Abre <code>chrome://extensions</code> en una pestaña nueva.</li>
-              <li>Activa el <b>Modo de desarrollador</b> (arriba a la derecha).</li>
-              <li>Pulsa <b>Cargar descomprimida</b> y elige la carpeta <b>CODEC47-chrome</b>.</li>
-              <li>Fija el ícono 47 en la barra, crea un dispositivo tipo <b>Chrome</b> y pega la clave.</li>
+              <li>Descomprime el ZIP en una carpeta que no vayas a borrar.</li>
+              <li>Abre <code>chrome://extensions</code>.</li>
+              <li>Activa el Modo de desarrollador.</li>
+              <li>Pulsa “Cargar descomprimida” y elige la carpeta CODEC47-chrome.</li>
+              <li>Crea un dispositivo tipo Chrome y pega la clave en la extensión.</li>
             </ol>
           </div>
           <div class="card dl">
-            <div class="dl-icon">🖥️</div>
+            <div class="card-icon"><i data-icon="monitor"></i></div>
             <h3>Agente para PC y servidores</h3>
-            <p class="muted small">Rendimiento, auditoría de seguridad, alertas de desconexión y control (abrir programas, volumen, bloquear).</p>
-            <a class="btn primary" href="/download/agent.js" download>Descargar agente</a>
+            <p class="muted small">Rendimiento, auditoría de seguridad, alertas de desconexión y control remoto.</p>
+            <a class="btn primary" href="/download/agent.js" download><i data-icon="download"></i>Descargar agente</a>
             <ol class="steps small">
               <li>Instala Node.js 22 o superior.</li>
-              <li>Crea un dispositivo tipo <b>PC</b> o <b>Servidor</b> y copia la clave.</li>
+              <li>Crea un dispositivo tipo PC o Servidor y copia la clave.</li>
               <li>Ejecuta: <code id="agent-cmd2"></code></li>
             </ol>
           </div>
@@ -174,25 +198,27 @@
       <!-- Ajustes -->
       <section class="view hidden" id="view-settings">
         <header class="topbar"><h1>Ajustes</h1></header>
-        <form class="card form" id="me-form">
-          <label>Tu nombre <input id="me-name" /></label>
-          <label>Tu ciudad (para el clima) <input id="me-city" /></label>
-          <label>Zona horaria <input id="me-tz" /></label>
-          <label>Voz de CODEC 47 (la misma en la web, el teléfono y Chrome)
-            <div class="row"><select id="me-voice"></select><button type="button" class="btn" id="voice-test">▶ Probar</button></div>
-          </label>
-          <button class="btn primary">Guardar</button>
-        </form>
-        <div class="card">
-          <h3>Cómo conectar cada dispositivo</h3>
-          <ol class="steps">
-            <li><b>Android:</b> en <i>Dispositivos</i> crea uno de tipo Android, abre la app CODEC 47 y pega la URL del servidor y la clave.</li>
-            <li><b>Chrome:</b> carga la carpeta <code>extension</code> en <code>chrome://extensions</code> (modo desarrollador → Cargar descomprimida), crea un dispositivo tipo Chrome y pega la clave en la extensión.</li>
-            <li><b>PC o servidor:</b> crea un dispositivo tipo PC o Servidor y ejecuta en esa máquina (Node 22+):<br />
-              <code id="agent-cmd"></code></li>
-          </ol>
+        <div class="grid">
+          <form class="card form" id="me-form">
+            <h3>Perfil</h3>
+            <label>Nombre <input id="me-name" /></label>
+            <label>Ciudad (para el clima) <input id="me-city" /></label>
+            <label>Zona horaria <input id="me-tz" /></label>
+            <label>Voz de CODEC 47 (la misma en la web, el teléfono y Chrome)
+              <div class="row"><select id="me-voice"></select><button type="button" class="btn" id="voice-test"><i data-icon="play"></i>Probar</button></div>
+            </label>
+            <button class="btn primary">Guardar</button>
+          </form>
+          <div class="card">
+            <h3>Conectar dispositivos</h3>
+            <ol class="steps small">
+              <li>Android: crea un dispositivo tipo Android, abre la app y pega la clave.</li>
+              <li>Chrome: carga la extensión en <code>chrome://extensions</code>, crea un dispositivo tipo Chrome y pega la clave.</li>
+              <li>PC o servidor: crea un dispositivo tipo PC o Servidor y ejecuta en esa máquina:<br /><code id="agent-cmd"></code></li>
+            </ol>
+            <div class="actions"><button class="btn ghost" id="logout"><i data-icon="logout"></i>Cerrar sesión</button></div>
+          </div>
         </div>
-        <button class="btn ghost" id="logout">Cerrar sesión</button>
       </section>
     </main>
   </div>

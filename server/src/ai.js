@@ -190,6 +190,8 @@ ${detail}
 
 REGLAS:
 - Para actuar usa las herramientas. Nunca digas que hiciste algo sin haber recibido ok de la herramienta.
+- Nunca copies respuestas anteriores del historial: cada orden nueva se ejecuta de nuevo con las herramientas.
+- Al poner música, di el título que devolvió la herramienta (lo que está sonando).
 - "Pon música": usa play_music con un query concreto (si no dicen qué, elige algo acorde a la hora o al ánimo). En el teléfono por defecto en el teléfono; "en la laptop/PC" = dispositivo Chrome en línea, o el agente pc.
 - "Modo privacidad" = whatsapp_privacy on. Si dicen "responde solo a X", usa allow. Confirma qué quedó configurado.
 - Si un dispositivo está desconectado o algo falla, dilo con claridad y propone una solución.
@@ -296,6 +298,8 @@ async function runTool(name, args, ctx) {
   }
 }
 
+const ACTION_INTENT = /(pon|ponme|pone|reproduce|toca|enciende|prende|apaga|abre|cierra|sube|baja|llama|env[ií]a|manda|toma|saca|agrega|añade|activa|desactiva|pausa|det[eé]n|siguiente|anterior|bloquea|ll[eé]vame|navega|recu[eé]rdame|programa|alarma|temporizador|escanea|lee|l[eé]eme)/i;
+
 const cleanReply = (s) =>
   String(s || '')
     .replace(/<think>[\s\S]*?<\/think>/g, '')
@@ -324,8 +328,9 @@ export async function chat({ userId, text, fromDevice = null }) {
   const ctx = { user, devices, fromDevice, actions: [] };
   let useTools = true;
   let reply = '';
+  let nudged = false;
 
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 7; i++) {
     let msg;
     try {
       msg = await callModel(messages, useTools);
@@ -341,6 +346,17 @@ export async function chat({ userId, text, fromDevice = null }) {
     const calls = msg.tool_calls || [];
     if (!calls.length) {
       reply = cleanReply(msg.content);
+      // Anti-"mentiras": si pidió una acción y el modelo dice que la hizo sin usar herramientas, se lo exigimos
+      if (!nudged && useTools && !ctx.actions.length && ACTION_INTENT.test(text)) {
+        nudged = true;
+        messages.push({ role: 'assistant', content: msg.content || '' });
+        messages.push({
+          role: 'system',
+          content: 'ATENCIÓN: no llamaste a ninguna herramienta, así que en realidad NO hiciste nada. Si el usuario pidió una acción, llama AHORA a la herramienta correcta (device_command, whatsapp_*, add_task...). Si no es posible, explica por qué. No repitas respuestas anteriores del historial.',
+        });
+        reply = '';
+        continue;
+      }
       break;
     }
 

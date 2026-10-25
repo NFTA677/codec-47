@@ -83,8 +83,8 @@ class MainActivity : Activity(), Hub.Listener {
     }
 
     override fun onStatus(status: String) {
-        this.status.text = "● $status"
-        this.status.setTextColor(if (status == "conectado") 0xFF76B900.toInt() else 0xFFF5B942.toInt())
+        this.status.text = status.replaceFirstChar { it.uppercase() }
+        this.status.setTextColor(if (status == "conectado") 0xFFFFFFFF.toInt() else 0xFF8F8F8F.toInt())
     }
 
     override fun onChatReply(text: String) = addMsg(text, false)
@@ -109,10 +109,11 @@ class MainActivity : Activity(), Hub.Listener {
     private fun styledButton(label: String, primary: Boolean = false, onClick: () -> Unit) = Button(this).apply {
         text = label
         isAllCaps = false
-        setTextColor(if (primary) 0xFF0B1400.toInt() else 0xFFE6EBF5.toInt())
+        setTextColor(if (primary) 0xFF0A0A0A.toInt() else 0xFFEDEDED.toInt())
         background = GradientDrawable().apply {
-            setColor(if (primary) 0xFF76B900.toInt() else 0xFF1A2233.toInt())
-            cornerRadius = 12 * dp
+            setColor(if (primary) 0xFFFFFFFF.toInt() else 0xFF171717.toInt())
+            if (!primary) setStroke(px(1), 0xFF262626.toInt())
+            cornerRadius = 10 * dp
         }
         setOnClickListener { onClick() }
     }
@@ -120,11 +121,11 @@ class MainActivity : Activity(), Hub.Listener {
     private fun input(hint: String, value: String, password: Boolean = false) = EditText(this).apply {
         this.hint = hint
         setText(value)
-        setTextColor(0xFFE6EBF5.toInt())
-        setHintTextColor(0xFF8B97AD.toInt())
+        setTextColor(0xFFEDEDED.toInt())
+        setHintTextColor(0xFF8F8F8F.toInt())
         isSingleLine = true
         inputType = if (password) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-        background = GradientDrawable().apply { setColor(0xFF1A2233.toInt()); cornerRadius = 10 * dp }
+        background = GradientDrawable().apply { setColor(0xFF171717.toInt()); cornerRadius = 10 * dp }
         setPadding(px(12), px(10), px(12), px(10))
     }
 
@@ -133,11 +134,11 @@ class MainActivity : Activity(), Hub.Listener {
     private fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF0B0F17.toInt())
+            setBackgroundColor(0xFF0A0A0A.toInt())
             setPadding(px(16), px(16), px(16), px(12))
             fitsSystemWindows = true
         }
-        root.addView(TextView(this).apply { text = "CODEC 47"; textSize = 22f; setTextColor(0xFFE6EBF5.toInt()) })
+        root.addView(TextView(this).apply { text = "CODEC 47"; textSize = 22f; typeface = android.graphics.Typeface.DEFAULT_BOLD; setTextColor(0xFFEDEDED.toInt()) })
         status = TextView(this).apply { textSize = 13f }
         root.addView(status)
 
@@ -161,38 +162,38 @@ class MainActivity : Activity(), Hub.Listener {
         root.addView(permBox, lp())
 
         val handsFree = CheckBox(this).apply {
-            text = "Manos libres: escuchar siempre y responder al decir “Codec…” (gasta más batería)"
-            setTextColor(0xFF8B97AD.toInt())
+            text = "Activación por voz: di “Codec” para hablarme, también con la pantalla apagada"
+            setTextColor(0xFF8F8F8F.toInt())
             isChecked = Prefs.handsFree(this@MainActivity)
             setOnCheckedChangeListener { _, v ->
                 Prefs.setHandsFree(this@MainActivity, v)
-                if (v) AssistantService.instance?.listen(handsFree = true) else AssistantService.instance?.stopListening()
+                AssistantService.instance?.applyWakeMode() ?: startAssistant()
             }
         }
         root.addView(handsFree, lp())
 
         val conversation = CheckBox(this).apply {
             text = "Conversación continua: después de responder, vuelve a escucharte"
-            setTextColor(0xFF8B97AD.toInt())
+            setTextColor(0xFF8F8F8F.toInt())
             isChecked = Prefs.conversation(this@MainActivity)
             setOnCheckedChangeListener { _, v -> Prefs.setConversation(this@MainActivity, v) }
         }
         root.addView(conversation, lp(0))
 
         // Versión + actualizaciones
-        val ver = TextView(this).apply { textSize = 12f; setTextColor(0xFF8B97AD.toInt()); text = "Versión ${Updater.currentName(this@MainActivity)}" }
+        val ver = TextView(this).apply { textSize = 12f; setTextColor(0xFF8F8F8F.toInt()); text = "Versión ${Updater.currentName(this@MainActivity)}" }
         root.addView(ver, lp(4))
         Updater.checkInBackground(this) { info ->
             if (info != null) {
                 ver.text = "Versión ${Updater.currentName(this)} → hay una nueva: v${info.name}"
-                root.addView(styledButton("⬆ Actualizar a v${info.name}", primary = true) { Updater.downloadAndInstall(this) }, root.indexOfChild(ver) + 1, lp(4))
+                root.addView(styledButton("Actualizar a v${info.name}", primary = true) { Updater.downloadAndInstall(this) }, root.indexOfChild(ver) + 1, lp(4))
             }
         }
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(styledButton("⚙ Configurar") { config.visibility = if (config.visibility == View.GONE) View.VISIBLE else View.GONE },
+        row.addView(styledButton("Configurar") { config.visibility = if (config.visibility == View.GONE) View.VISIBLE else View.GONE },
             LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = px(6) })
-        row.addView(styledButton("⏻ Detener") { Hub.stop(); AssistantService.stop(this) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        row.addView(styledButton("Detener") { Hub.stop(); AssistantService.stop(this) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         root.addView(row, lp())
 
         // Chat
@@ -201,17 +202,17 @@ class MainActivity : Activity(), Hub.Listener {
         root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { topMargin = px(10) })
 
         val composer = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val msg = input("Escribe o toca 🎙", "").apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES }
-        composer.addView(styledButton("🎙") { AssistantService.instance?.listen() ?: startAssistant() }, LinearLayout.LayoutParams(px(56), WRAP_CONTENT))
+        val msg = input("Escribe un mensaje", "").apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES }
+        composer.addView(styledButton("Hablar") { AssistantService.instance?.listen() ?: startAssistant() }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         composer.addView(msg, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = px(6); marginEnd = px(6) })
-        composer.addView(styledButton("➤", primary = true) {
+        composer.addView(styledButton("Enviar", primary = true) {
             val t = msg.text.toString().trim()
             if (t.isNotEmpty()) {
                 addMsg(t, true)
                 msg.setText("")
                 if (!Hub.sendChat(t)) addMsg("Sin conexión (${Hub.status})", false)
             }
-        }, LinearLayout.LayoutParams(px(56), WRAP_CONTENT))
+        }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         root.addView(composer, lp())
         return root
     }
@@ -219,10 +220,10 @@ class MainActivity : Activity(), Hub.Listener {
     fun addMsg(text: String, user: Boolean) {
         val tv = TextView(this).apply {
             this.text = text
-            setTextColor(0xFFE6EBF5.toInt())
+            setTextColor(if (user) 0xFF0A0A0A.toInt() else 0xFFEDEDED.toInt())
             textSize = 15f
             setPadding(px(12), px(8), px(12), px(8))
-            background = GradientDrawable().apply { setColor(if (user) 0xFF23406A.toInt() else 0xFF1A2233.toInt()); cornerRadius = 14 * dp }
+            background = GradientDrawable().apply { setColor(if (user) 0xFFFFFFFF.toInt() else 0xFF171717.toInt()); cornerRadius = 14 * dp }
         }
         log.addView(tv, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
             topMargin = px(6)
@@ -246,6 +247,12 @@ class MainActivity : Activity(), Hub.Listener {
         if (RUNTIME_PERMS.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED })
             items += "Conceder micrófono, cámara, calendario…" to { requestPermissions(RUNTIME_PERMS, 1) }
 
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        if (!pm.isIgnoringBatteryOptimizations(packageName))
+            items += "Permitir funcionar en segundo plano (batería)" to {
+                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+            }
+
         // Honor, Xiaomi, Huawei, Oppo...: bloquean que las apps abran otras apps en segundo plano
         if (!Prefs.bgTipShown(this) && Build.MANUFACTURER.lowercase() in setOf("honor", "huawei", "xiaomi", "redmi", "poco", "oppo", "vivo", "realme", "oneplus"))
             items += "Permitir “abrir en segundo plano / ventanas emergentes” (${Build.MANUFACTURER})" to {
@@ -254,6 +261,6 @@ class MainActivity : Activity(), Hub.Listener {
                 startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }
 
-        for ((label, action) in items) permBox.addView(styledButton("⚠ $label", onClick = action), lp(6))
+        for ((label, action) in items) permBox.addView(styledButton(label, onClick = action), lp(6))
     }
 }

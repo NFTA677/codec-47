@@ -12,15 +12,18 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.os.Build
+import android.media.MediaPlayer
+import android.media.ToneGenerator
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -32,30 +35,30 @@ import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
-import java.util.Locale
-import android.media.MediaPlayer
-import java.io.File
-import java.util.concurrent.TimeUnit
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.io.File
+import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 /**
- * Servicio principal: mantiene la conexión con el servidor, muestra la burbuja flotante,
- * escucha tu voz y habla las respuestas (bajando el volumen de la música mientras tanto).
+ * Servicio principal de CODEC 47:
+ *  - conexión en tiempo real con el servidor,
+ *  - activación por voz diciendo "Codec" (offline, también con la pantalla apagada),
+ *  - reconocimiento de la orden, voz de respuesta (la misma que en la web) y conversación continua,
+ *  - burbuja flotante.
  */
 class AssistantService : Service(), Hub.Listener {
     companion object {
         @Volatile var instance: AssistantService? = null
         private const val CHANNEL = "codec47"
-        private val WAKE_WORDS = listOf("oye codec", "oye códec", "codec", "códec", "kodak", "codex", "kodek")
 
         fun start(ctx: Context, fromBoot: Boolean = false) {
-            val i = Intent(ctx, AssistantService::class.java).putExtra("fromBoot", fromBoot)
-            ctx.startForegroundService(i)
+            ctx.startForegroundService(Intent(ctx, AssistantService::class.java).putExtra("fromBoot", fromBoot))
         }
 
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, AssistantService::class.java))
@@ -63,12 +66,16 @@ class AssistantService : Service(), Hub.Listener {
 
     private val main = Handler(Looper.getMainLooper())
     private lateinit var executor: CommandExecutor
+    private lateinit var wake: WakeWord
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var recognizer: SpeechRecognizer? = null
     private var listening = false
     private var speaking = false
     private var focusRequest: AudioFocusRequest? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var statusOverride: String? = null
+    private var currentTypes = 0
 
     private var bubble: LinearLayout? = null
     private var bubbleText: TextView? = null
@@ -80,15 +87,10 @@ class AssistantService : Service(), Hub.Listener {
         super.onCreate()
         instance = this
         executor = CommandExecutor(this)
+        wake = WakeWord(this)
         createChannel()
-        // Motor de Google si está instalado: sus voces neuronales suenan mucho más naturales
         val googleTts = try { packageManager.getPackageInfo("com.google.android.tts", 0); "com.google.android.tts" } catch (e: Exception) { null }
-        tts = TextToSpeech(this, { st ->
-            if (st == TextToSpeech.SUCCESS) {
-                setupVoice()
-                ttsReady = true
-            }
-        }, googleTts)
+        tts = TextToSpeech(this, { st -> if (st == TextToSpeech.SUCCESS) { setupLocalVoice(); ttsReady = true } }, googleTts)
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
             override fun onDone(id: String?) = onSpeechDone()
@@ -103,21 +105,26 @@ class AssistantService : Service(), Hub.Listener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val fromBoot = intent?.getBooleanExtra("fromBoot", false) == true
         var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-        // Micrófono y cámara solo se pueden declarar si el usuario abrió la app (no desde el arranque)
+        // Micrófono/cámara/ubicación solo se pueden declarar si el usuario abrió la app (no desde el arranque)
         if (!fromBoot) {
             if (has(Manifest.permission.RECORD_AUDIO)) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             if (has(Manifest.permission.CAMERA)) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             if (has(Manifest.permission.ACCESS_FINE_LOCATION)) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
         }
+        // Nunca bajar permisos a un servicio que ya corre con micrófono (p. ej. un BOOT_COMPLETED tardío)
+        if (fromBoot && currentTypes != 0) types = currentTypes
+        android.util.Log.i("CODEC47", "onStartCommand fromBoot=$fromBoot types=$types")
         try {
-            startForeground(1, buildNotification("Conectando…"), types)
+            startForeground(1, buildNotification(), types)
+            currentTypes = types
         } catch (e: Exception) {
-            startForeground(1, buildNotification("Conectando…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            android.util.Log.w("CODEC47", "startForeground con micrófono falló: ${e.message}")
+            startForeground(1, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            currentTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         }
         showBubble()
         Hub.start(this)
-        if (Prefs.handsFree(this)) main.postDelayed({ listen(handsFree = true) }, 1500)
-        // Busca actualizaciones al iniciar y cada 6 horas
+        if (!fromBoot) applyWakeMode()
         main.removeCallbacks(updateCheck)
         main.postDelayed(updateCheck, 20_000)
         return START_STICKY
@@ -127,7 +134,10 @@ class AssistantService : Service(), Hub.Listener {
         Hub.listeners.remove(this)
         Hub.commandHandler = null
         Hub.stop()
+        wake.stop()
+        releaseWakeLock()
         recognizer?.destroy()
+        stopPlayback()
         tts?.shutdown()
         bubble?.let { getSystemService(WindowManager::class.java).removeView(it) }
         instance = null
@@ -142,37 +152,88 @@ class AssistantService : Service(), Hub.Listener {
     }
 
     private fun has(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+    private fun screenOn() = getSystemService(PowerManager::class.java).isInteractive
 
-    /** Elige la voz en español de mejor calidad (latina primero) y un ritmo natural. */
-    private fun setupVoice() {
-        val t = tts ?: return
-        t.language = Locale.forLanguageTag("es-MX")
-        val latam = setOf("MX", "US", "CO", "AR", "PE", "CL", "419")
-        val best = t.voices
-            ?.filter { it.locale.language == "es" && !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }
-            ?.sortedWith(
-                compareByDescending<android.speech.tts.Voice> { it.quality }
-                    .thenByDescending { it.locale.country in latam }
-                    .thenByDescending { it.locale.country == "MX" }
-            )
-            ?.firstOrNull()
-        if (best != null) t.voice = best
-        t.setSpeechRate(1.07f)
-        t.setPitch(1.0f)
+    // ---------------- Activación por voz ("Codec") ----------------
+
+    /** Enciende o apaga la escucha de la palabra según la preferencia del usuario. */
+    fun applyWakeMode() {
+        if (Prefs.handsFree(this) && has(Manifest.permission.RECORD_AUDIO)) {
+            acquireWakeLock()
+            if (!listening && !speaking) wake.start()
+        } else {
+            wake.stop()
+            releaseWakeLock()
+        }
+        refreshNotification()
+    }
+
+    @SuppressLint("WakelockTimeout")
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        // Mantiene la CPU despierta (no la pantalla) para escuchar "Codec" con la pantalla apagada
+        wakeLock = getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "codec47:wake")
+            .apply { setReferenceCounted(false); acquire() }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+    }
+
+    private fun resumeWake() {
+        if (Prefs.handsFree(this) && !listening && !speaking) wake.start()
+    }
+
+    /** Llamado por WakeWord al oír "Codec …". [rest] = lo que dijo después en la misma frase. */
+    fun onWake(rest: String) {
+        beep()
+        if (rest.split(" ").count { it.isNotBlank() } >= 2) sendToAssistant(rest) // "Codec, pon música"
+        else captureCommand(followUp = false) // solo "Codec": escucha la orden
+    }
+
+    /** Orden capturada por Vosk (pantalla apagada). */
+    fun onWakeCommand(text: String) = sendToAssistant(text)
+
+    /** Escucha la orden: con pantalla encendida usa el reconocedor de Google (más preciso); apagada, Vosk. */
+    fun captureCommand(followUp: Boolean) {
+        if (screenOn()) {
+            wake.pause()
+            listen(followUp)
+        } else {
+            if (!Prefs.handsFree(this)) return // pantalla apagada sin activación por voz: nada que escuchar
+            showText(if (followUp) "¿Algo más?" else "Te escucho…", 8000)
+            wake.awaitCommand(if (followUp) 7000 else 9000)
+            wake.start()
+        }
+    }
+
+    private fun beep() {
+        try {
+            val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 60)
+            tg.startTone(ToneGenerator.TONE_PROP_ACK, 120)
+            main.postDelayed({ tg.release() }, 400)
+        } catch (_: Exception) {}
     }
 
     // ---------------- Notificación ----------------
     private fun createChannel() {
-        val ch = NotificationChannel(CHANNEL, "CODEC 47", NotificationManager.IMPORTANCE_LOW)
-        getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+        getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(NotificationChannel(CHANNEL, "CODEC 47", NotificationManager.IMPORTANCE_LOW))
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun buildNotification(): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val talk = PendingIntent.getActivity(
             this, 1, Intent(this, MainActivity::class.java).putExtra("listen", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        val text = statusOverride ?: when {
+            Hub.status != "conectado" -> Hub.status.replaceFirstChar { it.uppercase() }
+            Prefs.handsFree(this) -> "Di “Codec” para hablar"
+            else -> "Conectado"
+        }
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_logo)
             .setContentTitle("CODEC 47")
@@ -183,10 +244,25 @@ class AssistantService : Service(), Hub.Listener {
             .build()
     }
 
-    override fun onStatus(status: String) {
-        getSystemService(NotificationManager::class.java).notify(1, buildNotification(status.replaceFirstChar { it.uppercase() }))
-        orb?.alpha = if (status == "conectado") 1f else 0.5f
+    private fun refreshNotification() =
+        getSystemService(NotificationManager::class.java).notify(1, buildNotification())
+
+    /** Texto temporal en la notificación (ej. descargando el modelo). null = normal. */
+    fun setStatusText(text: String?) {
+        main.post {
+            statusOverride = text
+            refreshNotification()
+            if (text != null) showText(text, 6000)
+        }
     }
+
+    override fun onStatus(status: String) {
+        refreshNotification()
+        orb?.alpha = if (status == "conectado") 1f else 0.45f
+    }
+
+    // Respuesta del servidor
+    private var expectVoiceReply = false
 
     override fun onChatReply(text: String) {
         showText(text)
@@ -203,21 +279,28 @@ class AssistantService : Service(), Hub.Listener {
 
         val o = TextView(this).apply {
             text = "47"
-            textSize = 16f
-            setTextColor(0xFF0B0F17.toInt())
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFFFFFFFF.toInt())
             gravity = Gravity.CENTER
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF3AD1FF.toInt(), 0xFF76B900.toInt())).apply {
+            background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
+                setColor(0xF00A0A0A.toInt())
+                setStroke((2 * dp).toInt(), 0xFFFFFFFF.toInt())
             }
-            layoutParams = LinearLayout.LayoutParams((56 * dp).toInt(), (56 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams((52 * dp).toInt(), (52 * dp).toInt())
             elevation = 8 * dp
         }
         val t = TextView(this).apply {
-            setTextColor(0xFFE6EBF5.toInt())
+            setTextColor(0xFFEDEDED.toInt())
             textSize = 14f
-            maxWidth = (240 * dp).toInt()
-            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
-            background = GradientDrawable().apply { setColor(0xEE121826.toInt()); cornerRadius = 16 * dp }
+            maxWidth = (250 * dp).toInt()
+            setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
+            background = GradientDrawable().apply {
+                setColor(0xF2111111.toInt())
+                cornerRadius = 14 * dp
+                setStroke((1 * dp).toInt(), 0xFF262626.toInt())
+            }
             visibility = TextView.GONE
         }
         val layout = LinearLayout(this).apply {
@@ -240,7 +323,7 @@ class AssistantService : Service(), Hub.Listener {
             y = (200 * dp).toInt()
         }
 
-        // Arrastrar la burbuja; toque corto = hablar; toque largo = abrir la app
+        // Arrastrar; toque corto = hablar / detener; toque largo = abrir la app
         var sx = 0; var sy = 0; var tx = 0f; var ty = 0f; var down = 0L; var moved = false
         o.setOnTouchListener { _, e ->
             when (e.action) {
@@ -252,9 +335,13 @@ class AssistantService : Service(), Hub.Listener {
                     wm.updateViewLayout(layout, lp)
                 }
                 MotionEvent.ACTION_UP -> if (!moved) {
-                    if (System.currentTimeMillis() - down > 600) {
-                        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    } else if (speaking) { stopPlayback(); speaking = false; pendingFollowUp = false; releaseFocus() } else if (listening) stopListening() else listen()
+                    when {
+                        System.currentTimeMillis() - down > 600 ->
+                            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        speaking -> { pendingFollowUp = false; stopPlayback(); onSpeechDone() }
+                        listening -> stopListening()
+                        else -> captureCommand(followUp = false)
+                    }
                 }
             }
             true
@@ -280,14 +367,22 @@ class AssistantService : Service(), Hub.Listener {
         }
     }
 
-    // ---------------- Audio: bajar la música mientras hablamos ----------------
+    private fun setOrb(state: String) = main.post {
+        val o = orb ?: return@post
+        val bg = o.background as? GradientDrawable ?: return@post
+        when (state) {
+            "listening" -> { bg.setColor(0xFFFFFFFF.toInt()); o.setTextColor(0xFF0A0A0A.toInt()) }
+            else -> { bg.setColor(0xF00A0A0A.toInt()); o.setTextColor(0xFFFFFFFF.toInt()); o.scaleX = 1f; o.scaleY = 1f }
+        }
+    }
+
+    // ---------------- Audio: baja la música mientras hablamos ----------------
     private fun duck() {
-        val am = getSystemService(AudioManager::class.java)
         val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
             .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
             .build()
         focusRequest = req
-        am.requestAudioFocus(req)
+        getSystemService(AudioManager::class.java).requestAudioFocus(req)
     }
 
     private fun releaseFocus() {
@@ -295,11 +390,10 @@ class AssistantService : Service(), Hub.Listener {
         focusRequest = null
     }
 
-    // ---------------- Voz: NVIDIA Magpie desde el servidor (igual que en la web) ----------------
+    // ---------------- Voz de respuesta (NVIDIA, igual que en la web) ----------------
     private val http = OkHttpClient.Builder().callTimeout(25, TimeUnit.SECONDS).build()
     private var player: MediaPlayer? = null
     private var pendingFollowUp = false
-    private var expectVoiceReply = false
 
     private fun stopPlayback() {
         player?.let { try { it.stop() } catch (_: Exception) {}; it.release() }
@@ -307,12 +401,13 @@ class AssistantService : Service(), Hub.Listener {
         tts?.stop()
     }
 
-    /** Habla el texto. Si followUp = true, al terminar vuelve a escuchar (conversación continua). */
+    /** Habla el texto. followUp = true: al terminar vuelve a escuchar (conversación continua). */
     fun speak(text: String, followUp: Boolean = false) {
         val clean = text.replace(Regex("[\\p{So}\\p{Sk}*_#`]"), "").replace(Regex("\\s+"), " ").trim()
         if (clean.isBlank()) return
         main.post {
-            if (listening) { listening = false; recognizer?.cancel(); orb?.text = "47" }
+            wake.pause() // que no se escuche a sí mismo diciendo "CODEC"
+            if (listening) { listening = false; recognizer?.cancel(); setOrb("idle") }
             stopPlayback()
             speaking = true
             pendingFollowUp = followUp
@@ -320,7 +415,10 @@ class AssistantService : Service(), Hub.Listener {
         }
         Thread {
             val file = try { fetchVoice(clean) } catch (e: Exception) { null }
-            main.post { if (file != null) playFile(file) else localSpeak(clean) }
+            main.post {
+                if (!speaking) { file?.delete(); return@post }
+                if (file != null) playFile(file) else localSpeak(clean)
+            }
         }.start()
     }
 
@@ -342,6 +440,7 @@ class AssistantService : Service(), Hub.Listener {
         try {
             player = MediaPlayer().apply {
                 setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                setWakeMode(this@AssistantService, PowerManager.PARTIAL_WAKE_LOCK)
                 setDataSource(f.path)
                 setOnCompletionListener { release(); if (player === this) player = null; f.delete(); onSpeechDone() }
                 setOnErrorListener { mp, _, _ -> mp.release(); if (player === mp) player = null; f.delete(); onSpeechDone(); true }
@@ -352,6 +451,17 @@ class AssistantService : Service(), Hub.Listener {
             f.delete()
             onSpeechDone()
         }
+    }
+
+    private fun setupLocalVoice() {
+        val t = tts ?: return
+        t.language = Locale.forLanguageTag("es-US")
+        val male = t.voices?.filter { it.locale.language == "es" && !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }
+            ?.sortedWith(compareByDescending<android.speech.tts.Voice> { it.name.contains("male", true) && !it.name.contains("female", true) }.thenByDescending { it.quality })
+            ?.firstOrNull()
+        if (male != null) t.voice = male
+        t.setPitch(0.9f)
+        t.setSpeechRate(1.05f)
     }
 
     private fun localSpeak(text: String) {
@@ -366,95 +476,81 @@ class AssistantService : Service(), Hub.Listener {
             speaking = false
             val again = pendingFollowUp && Prefs.conversation(this)
             pendingFollowUp = false
-            if (again) main.postDelayed({ if (!speaking && !listening) listen(followUp = true) }, 250)
-            else { releaseFocus(); maybeResumeHandsFree() }
+            if (again) main.postDelayed({ if (!speaking && !listening) captureCommand(followUp = true) }, 250)
+            else { releaseFocus(); resumeWake() }
         }
     }
 
-    // ---------------- Reconocimiento de voz ----------------
-    private var handsFreeSession = false
-
+    // ---------------- Reconocimiento de la orden (Google, pantalla encendida) ----------------
     private var followUpSession = false
 
-    fun listen(handsFree: Boolean = false, followUp: Boolean = false) {
+    fun listen(followUp: Boolean = false) {
         main.post {
             if (!has(Manifest.permission.RECORD_AUDIO)) {
-                showText("Necesito permiso de micrófono. Ábreme para concederlo.")
+                showText("Necesito permiso de micrófono. Abre CODEC 47 para concederlo.")
                 return@post
             }
             if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-                showText("Este teléfono no tiene reconocimiento de voz (instala la app de Google).")
+                showText("Este teléfono no tiene reconocimiento de voz de Google.")
                 return@post
             }
+            wake.pause()
             stopPlayback()
             speaking = false
-            handsFreeSession = handsFree
             followUpSession = followUp
             recognizer?.destroy()
             recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply { setRecognitionListener(recListener) }
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
+                .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-PE")
                 .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            if (!handsFree) duck()
+            duck()
             listening = true
-            orb?.text = "🎙"
+            setOrb("listening")
             recognizer?.startListening(intent)
         }
     }
 
     fun stopListening() {
         listening = false
-        orb?.text = "47"
+        setOrb("idle")
         recognizer?.cancel()
-        if (!speaking) releaseFocus()
-    }
-
-    private fun maybeResumeHandsFree() {
-        if (Prefs.handsFree(this) && !listening && !speaking) main.postDelayed({ if (!listening && !speaking) listen(handsFree = true) }, 400)
+        if (!speaking) { releaseFocus(); resumeWake() }
     }
 
     private val recListener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) { if (!handsFreeSession) showText(if (followUpSession) "¿Algo más?…" else "Te escucho…", 15000) }
+        override fun onReadyForSpeech(params: Bundle?) { showText(if (followUpSession) "¿Algo más?" else "Te escucho…", 15000) }
         override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) { orb?.scaleX = 1f + (rmsdB.coerceIn(0f, 10f) / 40f); orb?.scaleY = orb?.scaleX ?: 1f }
+        override fun onRmsChanged(rmsdB: Float) { orb?.let { val s = 1f + (rmsdB.coerceIn(0f, 10f) / 50f); it.scaleX = s; it.scaleY = s } }
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() { orb?.scaleX = 1f; orb?.scaleY = 1f }
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onPartialResults(partial: Bundle?) {
             val t = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
-            if (!handsFreeSession && t.isNotBlank()) showText(t, 15000)
+            if (t.isNotBlank()) showText(t, 15000)
         }
 
         override fun onError(error: Int) {
             listening = false
-            orb?.text = "47"
-            if (!handsFreeSession && !followUpSession && error != SpeechRecognizer.ERROR_CLIENT) showText("No te escuché bien. Toca la burbuja para intentar otra vez.", 4000)
+            setOrb("idle")
+            // En conversación continua, el silencio simplemente termina la conversación
             if (followUpSession) bubbleText?.visibility = TextView.GONE
-            if (!speaking) releaseFocus()
-            maybeResumeHandsFree()
+            else if (error != SpeechRecognizer.ERROR_CLIENT) showText("No te escuché bien.", 3000)
+            if (!speaking) { releaseFocus(); resumeWake() }
         }
 
         override fun onResults(results: Bundle?) {
             listening = false
-            orb?.text = "47"
-            var text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
-            if (handsFreeSession) {
-                // En modo manos libres solo respondemos si dices "Codec ..."
-                val lower = text.lowercase()
-                val w = WAKE_WORDS.firstOrNull { lower.contains(it) }
-                if (w == null) { maybeResumeHandsFree(); return }
-                text = text.substring(lower.indexOf(w) + w.length).trim(' ', ',', '.')
-                if (text.isBlank()) { speak("¿Sí?"); main.postDelayed({ listen(handsFree = false) }, 900); return }
-            }
-            if (text.isBlank()) { releaseFocus(); maybeResumeHandsFree(); return }
+            setOrb("idle")
+            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
+            if (text.isBlank()) { releaseFocus(); resumeWake(); return }
             sendToAssistant(text)
         }
     }
 
-    private val BYE = Regex("^(ad[ií]os|chao|eso es todo|gracias,? eso es todo|para|detente|silencio|nada m[aá]s|ya est[aá])\\b", RegexOption.IGNORE_CASE)
+    private val BYE = Regex("^(ad[ií]os|chao|eso es todo|gracias,? eso es todo|para|detente|silencio|nada m[aá]s|ya est[aá]|nada)\\b", RegexOption.IGNORE_CASE)
 
     fun sendToAssistant(text: String, fromVoice: Boolean = true) {
         showText("“$text”", 15000)
@@ -463,6 +559,9 @@ class AssistantService : Service(), Hub.Listener {
         if (!Hub.sendChat(text)) {
             showText("Sin conexión con el servidor (${Hub.status}).")
             releaseFocus()
+            resumeWake()
+        } else {
+            resumeWake() // mientras llega la respuesta, sigue atento a "Codec"
         }
     }
 }

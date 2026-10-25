@@ -11,6 +11,43 @@ const el = (tag, props = {}, ...kids) => {
   return e;
 };
 
+// Íconos de línea (estilo Lucide), sin emojis
+const ICONS = {
+  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  devices: '<rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/>',
+  server: '<rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/>',
+  whatsapp: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/>',
+  tasks: '<path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+  settings: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/>',
+  send: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  play: '<path d="M7 4v16l13-8z"/>',
+  next: '<path d="M5 4v16l11-8zM19 5v14"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3M14 9l2 2"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+  light: '<path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/>',
+  battery: '<rect x="2" y="7" width="16" height="10" rx="2"/><path d="M22 11v2"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  tabs: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/>',
+};
+function icon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'i');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = ICONS[name] || '';
+  return svg;
+}
+document.querySelectorAll('i[data-icon]').forEach((i) => i.replaceWith(icon(i.dataset.icon)));
+const TYPE_ICON = { android: 'devices', chrome: 'globe', pc: 'monitor', server: 'server' };
+
 const state = { token: localStorageGet('c47_token'), user: null, devices: [], ws: null, registering: false };
 
 function localStorageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -107,7 +144,7 @@ async function sendChat(text, fromVoice = false) {
     const bye = /^(ad[ií]os|chao|eso es todo|gracias,? eso es todo|para|detente|silencio|nada m[aá]s)/i.test(text.trim());
     speak(r.text, fromVoice && !bye);
   } catch (e) {
-    addMsg('assistant', '⚠️ ' + e.message);
+    addMsg('assistant', 'Error: ' + e.message);
   } finally { $('#orb').classList.remove('thinking'); }
 }
 $('#chat-form').onsubmit = (e) => {
@@ -159,7 +196,7 @@ function browserSpeak(text, done) {
   if (!('speechSynthesis' in window)) return done();
   const voices = speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith('es'));
   const male = voices.find((v) => /jorge|pablo|alvaro|diego|raul|male|hombre/i.test(v.name)) || voices[0];
-  const parts = text.replace(/[p{Extended_Pictographic}*_#`]/gu, '').match(/[^.!?¡¿]+[.!?]*|[¡¿][^.!?]+[.!?]*/g) || [text];
+  const parts = text.replace(/[\p{Extended_Pictographic}*_#`]/gu, '').match(/[^.!?¡¿]+[.!?]*|[¡¿][^.!?]+[.!?]*/g) || [text];
   parts.forEach((p, i) => {
     const u = new SpeechSynthesisUtterance(p.trim());
     if (male) u.voice = male;
@@ -195,10 +232,10 @@ $('#mic').onclick = () => (rec ? rec.stop() : startMic());
 // ---------------- Dispositivos ----------------
 const TYPE_LABEL = { android: 'Android', chrome: 'Chrome', pc: 'PC', server: 'Servidor' };
 const QUICK = {
-  android: [['🔦 Linterna', 'flashlight', { on: true }], ['🔦 Apagar', 'flashlight', { on: false }], ['⏯️ Música', 'media', { cmd: 'play' }], ['🔋 Batería', 'battery', {}]],
-  chrome: [['⏯️ Play/Pausa', 'media', { cmd: 'play' }], ['⏭️ Siguiente', 'media', { cmd: 'next' }], ['📑 Pestañas', 'list_tabs', {}]],
-  pc: [['📊 Estado', 'status', {}], ['🛡️ Escanear', 'security_scan', {}], ['🔒 Bloquear', 'lock', {}], ['⏯️ Media', 'media', { cmd: 'play' }]],
-  server: [['📊 Estado', 'status', {}], ['🛡️ Escanear', 'security_scan', {}]],
+  android: [['Linterna', 'flashlight', { on: true }, 'light'], ['Apagar linterna', 'flashlight', { on: false }, 'light'], ['Play / pausa', 'media', { cmd: 'play' }, 'play'], ['Batería', 'battery', {}, 'battery']],
+  chrome: [['Play / pausa', 'media', { cmd: 'play' }, 'play'], ['Siguiente', 'media', { cmd: 'next' }, 'next'], ['Pestañas', 'list_tabs', {}, 'tabs']],
+  pc: [['Estado', 'status', {}, 'activity'], ['Escanear', 'security_scan', {}, 'shield'], ['Bloquear', 'lock', {}, 'lock'], ['Play / pausa', 'media', { cmd: 'play' }, 'play']],
+  server: [['Estado', 'status', {}, 'activity'], ['Escanear', 'security_scan', {}, 'shield']],
 };
 
 async function loadDevices() {
@@ -217,22 +254,23 @@ function ago(d) {
 function renderDevices() {
   const list = $('#device-list');
   list.innerHTML = '';
-  if (!state.devices.length) list.append(el('p', { class: 'muted' }, 'Aún no tienes dispositivos. Pulsa “+ Agregar”.'));
+  if (!state.devices.length) list.append(el('p', { class: 'muted' }, 'Aún no tienes dispositivos. Pulsa Agregar para conectar el primero.'));
   for (const d of state.devices) {
-    const out = el('div', { class: 'muted small' });
+    const out = el('div', { class: 'out' });
     list.append(
       el('div', { class: 'card' },
-        el('h3', {}, el('span', { class: 'dot' + (d.online ? ' on' : '') }), d.name, el('span', { class: 'badge' }, TYPE_LABEL[d.type])),
-        el('div', { class: 'muted small' }, d.online ? 'En línea' : 'Visto ' + ago(d.lastSeen)),
+        el('div', { class: 'card-icon' }, icon(TYPE_ICON[d.type])),
+        el('h3', {}, d.name, el('span', { class: 'badge' }, TYPE_LABEL[d.type])),
+        el('div', { class: 'muted small row' }, el('span', { class: 'dot' + (d.online ? ' on' : '') }), d.online ? 'En línea' : 'Visto ' + ago(d.lastSeen)),
         d.info?.os ? el('div', { class: 'muted small' }, d.info.os) : null,
         el('div', { class: 'actions' },
-          (QUICK[d.type] || []).map(([label, action, params]) =>
+          (QUICK[d.type] || []).map(([label, action, params, ic]) =>
             el('button', { class: 'btn small', onclick: async () => {
               out.textContent = '…';
-              try { const r = await api(`/devices/${d.id}/command`, { method: 'POST', body: { action, params } }); out.textContent = r.ok ? fmt(r.output) : '⚠️ ' + r.error; }
-              catch (e) { out.textContent = '⚠️ ' + e.message; }
-            } }, label)),
-          el('button', { class: 'btn small ghost', onclick: () => rotateKey(d) }, '🔑 Nueva clave'),
+              try { const r = await api(`/devices/${d.id}/command`, { method: 'POST', body: { action, params } }); out.textContent = r.ok ? fmt(r.output) : 'Error: ' + r.error; }
+              catch (e) { out.textContent = 'Error: ' + e.message; }
+            } }, icon(ic), label)),
+          el('button', { class: 'btn small ghost', onclick: () => rotateKey(d) }, icon('key'), 'Nueva clave'),
           el('button', { class: 'btn small ghost danger', onclick: () => removeDevice(d) }, 'Eliminar')
         ),
         out
@@ -337,7 +375,7 @@ async function loadAudit() {
   const rows = await api('/audit?limit=150' + (sev ? '&severity=' + sev : ''));
   const list = $('#audit-list');
   list.innerHTML = '';
-  if (!rows.length) list.append(el('p', { class: 'muted' }, 'Sin eventos.'));
+  if (!rows.length) list.append(el('div', { class: 'empty' }, 'Sin eventos.'));
   for (const r of rows) list.append(auditRow(r));
 }
 const auditRow = (r) => el('div', { class: 'ev' },
@@ -351,14 +389,14 @@ async function loadTasks() {
   const tasks = await api('/tasks');
   const ul = $('#task-list');
   ul.innerHTML = '';
-  if (!tasks.length) ul.append(el('li', { class: 'muted' }, 'Nada pendiente. 🎉'));
+  if (!tasks.length) ul.append(el('li', { class: 'muted' }, 'Nada pendiente.'));
   for (const t of tasks) {
     const cb = el('input', { type: 'checkbox' });
     cb.checked = t.done;
     cb.onchange = async () => { await api('/tasks/' + t._id, { method: 'PATCH', body: { done: cb.checked } }); loadTasks(); };
     ul.append(el('li', { class: t.done ? 'done' : '' }, cb, el('span', { class: 'grow' }, t.title),
       t.due ? el('span', { class: 'muted small' }, new Date(t.due).toLocaleString()) : null,
-      el('button', { class: 'btn small ghost', onclick: async () => { await api('/tasks/' + t._id, { method: 'DELETE' }); loadTasks(); } }, '✕')));
+      el('button', { class: 'btn small ghost', onclick: async () => { await api('/tasks/' + t._id, { method: 'DELETE' }); loadTasks(); } }, icon('x'))));
   }
 }
 $('#task-form').onsubmit = async (e) => {
@@ -408,14 +446,14 @@ function renderWaStatus(st) {
   } else {
     b.append(
       el('p', { class: 'muted small' }, 'CODEC 47 se conecta como un “dispositivo vinculado”, igual que WhatsApp Web. Tu teléfono sigue funcionando normal.'),
-      el('p', { class: 'muted small' }, '⚠️ Es una conexión no oficial: WhatsApp podría limitar cuentas que envían mensajes automáticos en exceso. Úsalo con moderación.'),
+      el('p', { class: 'muted small' }, 'Aviso: es una conexión no oficial: WhatsApp podría limitar cuentas que envían mensajes automáticos en exceso. Úsalo con moderación.'),
       el('button', { class: 'btn primary', onclick: async () => renderWaStatus(await api('/whatsapp/connect', { method: 'POST' })) }, 'Vincular WhatsApp')
     );
   }
 }
 const waRow = (m) => el('div', { class: 'ev' },
   el('span', { class: 'muted' }, new Date(m.at || Date.now()).toLocaleString()),
-  el('span', { class: m.from === 'yo' ? 'sev-info' : 'sev-warn' }, m.from === 'yo' ? (m.auto ? '🤖 CODEC 47' : 'Tú') : m.from),
+  el('span', { class: m.from === 'yo' ? 'sev-info' : 'sev-warn' }, m.from === 'yo' ? (m.auto ? 'CODEC 47 (auto)' : 'Tú') : m.from),
   el('span', {}, m.text));
 async function loadWhatsApp() {
   const st = await api('/whatsapp');
@@ -427,7 +465,7 @@ async function loadWhatsApp() {
   $('#wa-instr').value = w.instructions || '';
   const msgs = await api('/whatsapp/messages?limit=40');
   $('#wa-messages').innerHTML = '';
-  if (!msgs.length) $('#wa-messages').append(el('p', { class: 'muted' }, 'Sin mensajes todavía.'));
+  if (!msgs.length) $('#wa-messages').append(el('div', { class: 'empty' }, 'Sin mensajes todavía.'));
   for (const m of msgs) $('#wa-messages').append(waRow(m));
 }
 $('#wa-form').onsubmit = async (e) => {
@@ -458,7 +496,7 @@ function connectWS() {
   ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: state.token }));
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.type === 'auth_ok') $('#ws-status').textContent = '● en vivo';
+    if (m.type === 'auth_ok') { $('#ws-status').textContent = 'En vivo'; $('#ws-dot').classList.add('on'); }
     if (m.type === 'device') {
       const d = state.devices.find((x) => x.id === m.id);
       if (d) { d.online = m.online; d.lastSeen = new Date(); renderDevices(); renderServers(); }
@@ -488,7 +526,7 @@ function connectWS() {
   const pinger = setInterval(() => ws.readyState === 1 && ws.send('{"type":"ping"}'), 25_000);
   ws.onclose = () => {
     clearInterval(pinger);
-    $('#ws-status').textContent = '● reconectando…';
+    $('#ws-status').textContent = 'Reconectando…'; $('#ws-dot').classList.remove('on');
     if (state.token) setTimeout(connectWS, 3000);
   };
 }
